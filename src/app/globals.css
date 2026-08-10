@@ -1,16 +1,22 @@
-@import url('https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Gowun+Dodum&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Gowun+Dodum&family=Jua&display=swap');
 @import "tailwindcss";
 
 :root {
-  --night: #2B2D5C;
-  --night-deep: #1E1F44;
+  --night-deep: #14153A;
+  --night: #23245A;
+  --night-soft: #3A3A7A;
   --star-gold: #FFC94D;
+  --gold-bright: #FFE9B0;
   --lavender: #B8A9E8;
   --lavender-light: #EFEAFB;
   --peach-soft: #FFB88A;
   --paper: #FFF8EE;
+  --paper-warm: #FFF1DE;
   --ink: #3D3A5C;
   --ink-soft: #8B87A8;
+  --aurora-a: #5B4FB8;
+  --aurora-b: #3E7FB8;
+  --aurora-c: #8B5FC4;
 }
 
 * {
@@ -21,27 +27,132 @@ html, body {
   background: var(--paper);
   color: var(--ink);
   font-family: 'Gowun Dodum', 'Apple SD Gothic Neo', sans-serif;
+  overflow-x: hidden;
 }
 
-.font-title {
-  font-family: 'Gaegu', cursive;
+.font-title { font-family: 'Gaegu', cursive; }
+.font-round { font-family: 'Jua', sans-serif; }
+
+/* ── 밤하늘 무대 ── */
+.sky {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% 100%, #4A4590 0%, transparent 60%),
+    linear-gradient(180deg, #0E0F2E 0%, var(--night-deep) 35%, var(--night) 70%, #3A3878 100%);
 }
 
+/* 오로라 */
+.aurora {
+  position: absolute;
+  inset: -20% -30% auto -30%;
+  height: 70%;
+  filter: blur(48px);
+  opacity: 0.5;
+  background:
+    radial-gradient(50% 60% at 20% 40%, var(--aurora-a) 0%, transparent 70%),
+    radial-gradient(45% 55% at 60% 30%, var(--aurora-b) 0%, transparent 70%),
+    radial-gradient(45% 60% at 85% 50%, var(--aurora-c) 0%, transparent 70%);
+  animation: auroraShift 14s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes auroraShift {
+  0%   { transform: translateX(-6%) translateY(0) scale(1); opacity: 0.42; }
+  50%  { transform: translateX(4%) translateY(-4%) scale(1.08); opacity: 0.6; }
+  100% { transform: translateX(8%) translateY(2%) scale(1.02); opacity: 0.45; }
+}
+
+/* 별 반짝임 */
 @keyframes twinkle {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.85); }
+  50% { opacity: 0.25; transform: scale(0.8); }
 }
 .star {
   position: absolute;
   color: var(--star-gold);
-  animation: twinkle 2.5s ease-in-out infinite;
+  animation: twinkle 2.6s ease-in-out infinite;
+  pointer-events: none;
+  text-shadow: 0 0 8px rgba(255, 201, 77, 0.8);
+}
+
+/* 반딧불이 */
+@keyframes fly {
+  0%   { transform: translate(0, 0); opacity: 0; }
+  15%  { opacity: 1; }
+  50%  { transform: translate(18px, -26px); opacity: 0.9; }
+  85%  { opacity: 0.8; }
+  100% { transform: translate(-10px, -52px); opacity: 0; }
+}
+.firefly {
+  position: absolute;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--gold-bright);
+  box-shadow: 0 0 10px 3px rgba(255, 233, 176, 0.75);
+  animation: fly 7s ease-in-out infinite;
   pointer-events: none;
 }
 
+/* 구름 흐름 */
+@keyframes drift {
+  from { transform: translateX(-14%); }
+  to   { transform: translateX(14%); }
+}
+.cloud {
+  position: absolute;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  filter: blur(14px);
+  animation: drift 26s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* 둥실 */
 @keyframes floaty {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  50% { transform: translateY(-7px); }
 }
-.floaty {
-  animation: floaty 4s ease-in-out infinite;
+.floaty { animation: floaty 4.5s ease-in-out infinite; }
+
+/* 달빛 맥동 */
+@keyframes moonGlow {
+  0%, 100% { filter: drop-shadow(0 0 14px rgba(255,201,77,0.55)); }
+  50%      { filter: drop-shadow(0 0 26px rgba(255,201,77,0.85)); }
 }
+.moon { animation: moonGlow 5s ease-in-out infinite, floaty 7s ease-in-out infinite; }
+
+/* 제목 빛번짐 */
+.glow-title {
+  text-shadow:
+    0 0 18px rgba(184, 169, 232, 0.55),
+    0 2px 0 rgba(0, 0, 0, 0.18);
+}
+
+/* 마법 카드 */
+.card-magic {
+  position: relative;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.card-magic::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(140deg, rgba(255,255,255,0.55) 0%, transparent 42%);
+  pointer-events: none;
+}
+.card-magic:active { transform: scale(0.96); }
+
+/* 선택 카드 테두리 광채 */
+@keyframes ringPulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(255,201,77,0.55), 0 12px 30px rgba(43,45,92,0.28); }
+  50%      { box-shadow: 0 0 0 5px rgba(255,201,77,0.35), 0 16px 38px rgba(43,45,92,0.34); }
+}
+.ring-magic { animation: ringPulse 2.2s ease-in-out infinite; }
+
+/* 스크롤 등장 */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rise { animation: riseIn 0.45s ease-out both; }
