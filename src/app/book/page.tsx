@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SEED_STORIES } from '@/data/seedStories';
+import { createClient } from '@/lib/supabase';
 
 interface BookPageData {
   tag: string;
@@ -34,6 +35,19 @@ const VOICES = [
 
 const PREVIEW_TEXT = '옛날 옛날에, 반짝이는 별 하나가 있었어요.';
 
+// base64 데이터 URL을 Blob으로 변환
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(',');
+  const mimeMatch = header.match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
 export default function BookViewer() {
   const router = useRouter();
   const [story, setStory] = useState<CompletedStory | null>(null);
@@ -43,6 +57,7 @@ export default function BookViewer() {
   const [touchStartX, setTouchStartX] = useState(0);
   const [showFinish, setShowFinish] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('');
 
   const [showVoicePicker, setShowVoicePicker] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -52,7 +67,6 @@ export default function BookViewer() {
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const autoPlayRef = useRef(false);
   const pagesRef = useRef<BookPageData[]>([]);
-  // TTS 오디오 캐시: "voiceId-pageIdx" -> blob URL
   const audioCacheRef = useRef<Map<string, string>>(new Map());
 
   const [showWords, setShowWords] = useState(false);
@@ -127,7 +141,6 @@ export default function BookViewer() {
     setImgProgress((p) => ({ ...p, done: true }));
   };
 
-  // TTS 오디오 가져오기 (캐시 우선)
   const fetchAudio = async (voiceId: string, pageIdx: number): Promise<string | null> => {
     const key = `${voiceId}-${pageIdx}`;
     if (audioCacheRef.current.has(key)) {
@@ -151,7 +164,6 @@ export default function BookViewer() {
     }
   };
 
-  // 오디오북 모드: 재생 시작과 동시에 다음 페이지 미리 생성
   const playFromPage = async (voiceId: string, pageIdx: number) => {
     const pageList = pagesRef.current;
     if (pageIdx >= pageList.length) {
@@ -174,7 +186,6 @@ export default function BookViewer() {
       return;
     }
 
-    // 🔑 핵심: 재생 시작하면서 다음 페이지 음성을 백그라운드에서 미리 생성
     fetchAudio(voiceId, pageIdx + 1);
 
     const audio = new Audio(url);
@@ -194,7 +205,6 @@ export default function BookViewer() {
     setIsPlaying(true);
   };
 
-  // 목소리 미리듣기
   const previewVoice = async (voiceId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     previewAudioRef.current?.pause();
@@ -281,33 +291,85 @@ export default function BookViewer() {
     speechSynthesis.speak(utter);
   };
 
+  // 저장: 이미지는 브라우저에서 직접 Storage에 업로드
   const handlePublish = async (isPublic: boolean) => {
     if (saving) return;
     setSaving(true);
+    setSaveStatus('준비 중...');
+
     try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        alert('로그인하면 동화를 서재에 보관할 수 있어요! 메인에서 카카오 로그인 해주세요 😊');
+        router.push('/');
+        return;
+      }
+
+      const storyId = crypto.randomUUID();
+      const list = pagesRef.current;
+      const uploaded: (string | null)[] = [];
+
+      // 1. 이미지 하나씩 Storage에 업로드
+      for (let i = 0; i < list.length; i++) {
+        setSaveStatus(`그림 저장 중... (${i + 1}/${list.length})`);
+        const img = list[i].imageUrl;
+        if (!img || !img.startsWith('data:image')) {
+          uploaded.push(img && img.startsWith('http') ? img : null);
+          continue;
+        }
+        try {
+          const blob = dataUrlToBlob(img);
+          const path = `${storyId}/page-${i}.png`;
+          const { error: upErr } = await supabase.storage
+            .from('story-images')
+            .upload(path, blob, { contentType: 'image/png', upsert: true });
+          if (upErr) {
+            uploaded.push(null);
+            continue;
+          }
+          const { data: urlData } = supabase.storage
+            .from('story-images')
+            .getPublicUrl(path);
+          uploaded.push(urlData.publicUrl);
+        } catch {
+          uploaded.push(null);
+        }
+      }
+
+      // 2. 텍스트 + 이미지 주소만 서버로 전송 (가벼움)
+      setSaveStatus('이야기 저장 중...');
       const res = await fetch('/api/save-story', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          storyId,
           title: story!.title,
           seedId: story!.seedId,
           totalPages: story!.totalPages,
           isPublic,
-          pages: pagesRef.current.map((p) => ({
-            text: p.text,
-            imageUrl: p.imageUrl,
-          })),
+          pages: list.map((p, i) => ({ text: p.text, imageUrl: uploaded[i] })),
         }),
       });
-      const data = await res.json();
-      if (data.error) {
+
+      // 응답이 JSON이 아닐 경우도 안전하게 처리
+      const raw = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(`서버 응답 오류 (${res.status})`);
+      }
+
+      if (!res.ok || data.error) {
         if (res.status === 401) {
-          alert('로그인하면 동화를 서재에 보관할 수 있어요! 메인에서 카카오 로그인 해주세요 😊');
+          alert('로그인이 필요해요! 메인에서 카카오 로그인 해주세요 😊');
           router.push('/');
           return;
         }
-        throw new Error(data.error);
+        throw new Error(data.error || `저장 실패 (${res.status})`);
       }
+
       alert(isPublic ? '🌟 동화가 모두에게 공개됐어요!' : '🔒 내 서재에 저장됐어요!');
       sessionStorage.removeItem('completedStory');
       router.push('/library');
@@ -315,6 +377,7 @@ export default function BookViewer() {
       alert('저장 오류: ' + e.message);
     } finally {
       setSaving(false);
+      setSaveStatus('');
     }
   };
 
@@ -459,7 +522,7 @@ export default function BookViewer() {
         </button>
       </div>
 
-      {/* 목소리 선택 모달 (미리듣기 포함) */}
+      {/* 목소리 선택 모달 */}
       {showVoicePicker && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center"
@@ -539,11 +602,13 @@ export default function BookViewer() {
                 setShowFinish(false);
                 fetchWords();
               }}
+              disabled={saving}
               className="w-full py-4 rounded-full font-title text-lg font-bold mb-2.5 transition-all active:scale-98"
               style={{
                 background: 'linear-gradient(135deg, var(--lavender), #9D8BD8)',
                 color: 'white',
                 boxShadow: '0 6px 18px rgba(184,169,232,0.45)',
+                opacity: saving ? 0.5 : 1,
               }}
             >
               📚 오늘의 단어 배우기
@@ -560,7 +625,7 @@ export default function BookViewer() {
                 opacity: saving ? 0.6 : 1,
               }}
             >
-              {saving ? '저장 중...' : '🌟 모두에게 공개하기'}
+              {saving ? saveStatus || '저장 중...' : '🌟 모두에게 공개하기'}
             </button>
             <button
               onClick={() => handlePublish(false)}
@@ -568,10 +633,11 @@ export default function BookViewer() {
               className="w-full py-3.5 rounded-full font-title text-base font-bold mb-2.5 transition-all active:scale-98"
               style={{ border: '2px solid var(--lavender)', color: '#7A6BC4', opacity: saving ? 0.6 : 1 }}
             >
-              {saving ? '저장 중...' : '🔒 나만 보기'}
+              {saving ? saveStatus || '저장 중...' : '🔒 나만 보기'}
             </button>
             <button
               onClick={() => setShowFinish(false)}
+              disabled={saving}
               className="text-xs font-bold"
               style={{ color: 'var(--ink-soft)' }}
             >
