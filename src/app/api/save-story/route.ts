@@ -26,68 +26,43 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = await getSupabase();
 
-    // 로그인 확인
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ error: '로그인이 필요해요' }, { status: 401 });
     }
 
-    const { title, seedId, totalPages, isPublic, pages } = await req.json();
+    const { storyId, title, seedId, totalPages, isPublic, pages } = await req.json();
 
-    // 1. 동화 레코드 생성
+    const coverUrl = pages?.[0]?.imageUrl || null;
+
+    // 1. 동화 레코드 생성 (클라이언트가 만든 id 사용)
     const { data: fairytale, error: ftError } = await supabase
       .from('fairytales')
       .insert({
+        id: storyId,
         user_id: user.id,
         title,
         seed_story_id: seedId,
         total_pages: totalPages,
         is_public: isPublic,
         status: 'completed',
+        cover_image_url: coverUrl,
       })
       .select()
       .single();
 
     if (ftError) throw new Error(ftError.message);
 
-    // 2. 각 페이지 저장 (이미지는 Storage에 업로드)
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      let imageUrl = null;
+    // 2. 페이지 일괄 저장 (이미지는 이미 업로드된 URL)
+    const rows = pages.map((p: any, i: number) => ({
+      fairytale_id: fairytale.id,
+      page_number: i,
+      ai_text: p.text,
+      image_url: p.imageUrl || null,
+    }));
 
-      // base64 이미지를 Storage에 업로드
-      if (page.imageUrl && page.imageUrl.startsWith('data:image')) {
-        const base64Data = page.imageUrl.split(',')[1];
-        const buffer = Buffer.from(base64Data, 'base64');
-        const filePath = `${fairytale.id}/page-${i}.png`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('story-images')
-          .upload(filePath, buffer, { contentType: 'image/png' });
-
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage
-            .from('story-images')
-            .getPublicUrl(filePath);
-          imageUrl = urlData.publicUrl;
-        }
-      }
-
-      await supabase.from('pages').insert({
-        fairytale_id: fairytale.id,
-        page_number: i,
-        ai_text: page.text,
-        image_url: imageUrl,
-      });
-
-      // 표지 이미지를 동화 커버로 설정
-      if (i === 0 && imageUrl) {
-        await supabase
-          .from('fairytales')
-          .update({ cover_image_url: imageUrl })
-          .eq('id', fairytale.id);
-      }
-    }
+    const { error: pageError } = await supabase.from('pages').insert(rows);
+    if (pageError) throw new Error(pageError.message);
 
     return NextResponse.json({ success: true, id: fairytale.id });
   } catch (e: any) {
