@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Gowun+Dodum&display=swap');
+@import "tailwindcss";
+
+:root {
+  --night: #2B2D5C;
+  --night-deep: #1E1F44;
+  --star-gold: #FFC94D;
+  --lavender: #B8A9E8;
+  --lavender-light: #EFEAFB;
+  --peach-soft: #FFB88A;
+  --paper: #FFF8EE;
+  --ink: #3D3A5C;
+  --ink-soft: #8B87A8;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Gowun Dodum', 'Apple SD Gothic Neo', sans-serif;
+}
+
+.font-title {
+  font-family: 'Gaegu', cursive;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+.star {
+  position: absolute;
+  color: var(--star-gold);
+  animation: twinkle 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.floaty {
+  animation: floaty 4s ease-in-out infinite;
+}
