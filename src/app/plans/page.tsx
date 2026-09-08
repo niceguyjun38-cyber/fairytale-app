@@ -1,4 +1,5 @@
 'use client';
+import { SiteHeader } from '@/components/SiteHeader';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -24,8 +25,8 @@ const PLANS = [
       '별가루 18개 / 매달',
       '8장 · 12장 · 15장 모두',
       '읽어주기 무제한',
-      '동요 만들기 월 3곡',
-      '연말 인기 랭킹 참여',
+      '동요 만들기 · 준비 중',
+      '연말 인기 랭킹 · 준비 중',
     ],
     highlight: true,
   },
@@ -49,9 +50,10 @@ export default function PlansPage() {
   }, [user]);
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--paper)' }}>
+    <div className="min-h-screen collection-page plans-page" style={{ background: 'var(--paper)' }}>
+      <SiteHeader/>
       <header
-        className="relative px-4 pt-8 pb-12 overflow-hidden"
+        className="page-banner relative px-4 pt-8 pb-12 overflow-hidden"
         style={{
           background: 'linear-gradient(180deg, var(--night-deep) 0%, var(--night) 100%)',
           borderRadius: '0 0 32px 32px',
@@ -111,7 +113,7 @@ export default function PlansPage() {
                     className="absolute top-4 right-4 text-[10px] font-bold px-2.5 py-1 rounded-full"
                     style={{ background: 'var(--star-gold)', color: 'var(--night-deep)' }}
                   >
-                    가장 인기
+                    별빛 플랜
                   </span>
                 </>
               )}
@@ -150,7 +152,7 @@ export default function PlansPage() {
                 onClick={() =>
                   alert('💳 결제 기능은 곧 열려요!\n조금만 기다려주세요 😊')
                 }
-                disabled={currentPlan === plan.id}
+                disabled
                 className="w-full py-3.5 rounded-full font-title text-base font-bold transition-all active:scale-98"
                 style={{
                   background:
@@ -167,7 +169,7 @@ export default function PlansPage() {
                       : 'white',
                 }}
               >
-                {currentPlan === plan.id ? '사용 중인 플랜' : `${plan.name} 시작하기`}
+                {currentPlan === plan.id ? '사용 중인 플랜' : '결제 준비 중'}
               </button>
             </div>
           ))}

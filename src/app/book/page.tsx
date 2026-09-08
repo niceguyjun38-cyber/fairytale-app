@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { SEED_STORIES } from '@/data/seedStories';
 import { createClient } from '@/lib/supabase';
+import { WordStudy } from '@/components/WordStudy';
 
 interface BookPageData {
   tag: string;
@@ -17,13 +18,6 @@ interface CompletedStory {
   title: string;
   totalPages: number;
   parts: { user: string; ai: string }[];
-}
-
-interface StudyWord {
-  korean: string;
-  english: string;
-  emoji: string;
-  sentence: string;
 }
 
 const VOICES = [
@@ -68,10 +62,6 @@ export default function BookViewer() {
   const autoPlayRef = useRef(false);
   const pagesRef = useRef<BookPageData[]>([]);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
-
-  const [showWords, setShowWords] = useState(false);
-  const [words, setWords] = useState<StudyWord[]>([]);
-  const [wordsLoading, setWordsLoading] = useState(false);
 
   useEffect(() => {
     pagesRef.current = pages;
@@ -261,39 +251,9 @@ export default function BookViewer() {
     }
   };
 
-  const fetchWords = async () => {
-    if (words.length > 0) {
-      setShowWords(true);
-      return;
-    }
-    setWordsLoading(true);
-    setShowWords(true);
-    try {
-      const fullText = pagesRef.current.map((p) => p.text).join(' ');
-      const res = await fetch('/api/words', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storyText: fullText }),
-      });
-      const data = await res.json();
-      if (data.words) setWords(data.words);
-    } catch {
-      // 실패 시 조용히 넘어감
-    } finally {
-      setWordsLoading(false);
-    }
-  };
-
-  const speakWord = (text: string) => {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'en-US';
-    utter.rate = 0.8;
-    speechSynthesis.speak(utter);
-  };
-
   // 저장: 이미지는 브라우저에서 직접 Storage에 업로드
   const handlePublish = async (isPublic: boolean) => {
-    if (saving) return;
+    if (saving || !imgProgress.done) return;
     setSaving(true);
     setSaveStatus('준비 중...');
 
@@ -381,6 +341,17 @@ export default function BookViewer() {
     }
   };
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (showFinish || showVoicePicker || document.querySelector('dialog[open]')) return;
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); goPrev(); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); goNext(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [currentIdx, pages.length, showFinish, showVoicePicker]);
+
   if (!story || pages.length === 0) return null;
 
   const page = pages[currentIdx];
@@ -388,7 +359,7 @@ export default function BookViewer() {
 
   return (
     <div
-      className="min-h-screen flex flex-col relative overflow-hidden"
+      className="reader-page min-h-screen flex flex-col relative overflow-hidden"
       style={{ background: 'linear-gradient(180deg, var(--night-deep) 0%, var(--night) 60%, #3A3670 100%)' }}
     >
       <span className="star text-xs" style={{ top: '8%', left: '10%' }}>✦</span>
@@ -435,7 +406,7 @@ export default function BookViewer() {
         onTouchEnd={handleTouchEnd}
       >
         <div
-          className="w-full max-w-sm rounded-3xl overflow-hidden"
+          className="reader-spread w-full max-w-sm rounded-3xl overflow-hidden"
           style={{
             background: 'var(--paper)',
             boxShadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 0 6px rgba(255,201,77,0.15)',
@@ -497,16 +468,17 @@ export default function BookViewer() {
         ← 손가락으로 넘겨보세요 →
       </p>
 
-      <div className="flex items-center justify-between px-5 py-4 relative">
+      <div className="reader-nav flex items-center justify-between px-5 py-4 relative">
         <button
           onClick={goPrev}
+          aria-label="이전 장"
           disabled={currentIdx === 0}
           className="w-12 h-12 rounded-full text-xl transition-all active:scale-90 disabled:opacity-15"
           style={{ background: 'rgba(255,255,255,0.15)', color: 'var(--star-gold)' }}
         >
           ‹
         </button>
-        <div className="flex gap-1.5">
+        <div className="reader-dots flex gap-1.5" aria-label="읽기 진행">
           {pages.map((_, i) => (
             <span key={i} className="text-xs transition-all" style={{ opacity: i === currentIdx ? 1 : 0.25 }}>
               ⭐
@@ -515,12 +487,15 @@ export default function BookViewer() {
         </div>
         <button
           onClick={goNext}
+          aria-label="다음 장"
           className="w-12 h-12 rounded-full text-xl transition-all active:scale-90"
           style={{ background: 'rgba(255,255,255,0.15)', color: 'var(--star-gold)' }}
         >
           ›
         </button>
       </div>
+
+      {!showFinish && <WordStudy storyText={pages.map(p => p.text).slice(1).join(" ")} autoPrepare className="reader-words-open"/>}
 
       {/* 목소리 선택 모달 */}
       {showVoicePicker && (
@@ -597,26 +572,11 @@ export default function BookViewer() {
               보여줄까요?
             </p>
 
-            <button
-              onClick={() => {
-                setShowFinish(false);
-                fetchWords();
-              }}
-              disabled={saving}
-              className="w-full py-4 rounded-full font-title text-lg font-bold mb-2.5 transition-all active:scale-98"
-              style={{
-                background: 'linear-gradient(135deg, var(--lavender), #9D8BD8)',
-                color: 'white',
-                boxShadow: '0 6px 18px rgba(184,169,232,0.45)',
-                opacity: saving ? 0.5 : 1,
-              }}
-            >
-              📚 오늘의 단어 배우기
-            </button>
+            <WordStudy storyText={pages.map(p => p.text).slice(1).join(" ")} autoPrepare/>
 
             <button
               onClick={() => handlePublish(true)}
-              disabled={saving}
+              disabled={saving || !imgProgress.done}
               className="w-full py-4 rounded-full font-title text-lg font-bold mb-2.5 transition-all active:scale-98"
               style={{
                 background: 'linear-gradient(135deg, var(--star-gold), var(--peach-soft))',
@@ -625,15 +585,15 @@ export default function BookViewer() {
                 opacity: saving ? 0.6 : 1,
               }}
             >
-              {saving ? saveStatus || '저장 중...' : '🌟 모두에게 공개하기'}
+              {saving ? saveStatus || '저장 중...' : !imgProgress.done ? '그림을 완성하고 있어요…' : '🌟 모두에게 공개하기'}
             </button>
             <button
               onClick={() => handlePublish(false)}
-              disabled={saving}
+              disabled={saving || !imgProgress.done}
               className="w-full py-3.5 rounded-full font-title text-base font-bold mb-2.5 transition-all active:scale-98"
               style={{ border: '2px solid var(--lavender)', color: '#7A6BC4', opacity: saving ? 0.6 : 1 }}
             >
-              {saving ? saveStatus || '저장 중...' : '🔒 나만 보기'}
+              {saving ? saveStatus || '저장 중...' : !imgProgress.done ? '그림을 완성하고 있어요…' : '🔒 내 서재에 비공개로 저장'}
             </button>
             <button
               onClick={() => setShowFinish(false)}
@@ -647,78 +607,7 @@ export default function BookViewer() {
         </div>
       )}
 
-      {/* 오늘의 단어 모달 */}
-      {showWords && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-5"
-          style={{ background: 'rgba(20,20,45,0.85)', backdropFilter: 'blur(4px)' }}
-        >
-          <div
-            className="w-full max-w-sm rounded-3xl p-6 relative overflow-hidden max-h-[85vh] overflow-y-auto"
-            style={{ background: 'var(--paper)' }}
-          >
-            <span className="absolute top-4 right-6 text-xs star">✦</span>
-            <p className="font-title text-2xl font-bold text-center mb-1" style={{ color: 'var(--ink)' }}>
-              📚 오늘의 단어
-            </p>
-            <p className="text-xs text-center mb-5" style={{ color: 'var(--ink-soft)' }}>
-              내 동화에서 나온 영어 단어들이에요!
-              <br />
-              단어를 누르면 발음을 들려줘요 🔊
-            </p>
 
-            {wordsLoading ? (
-              <div className="text-center py-8">
-                <span className="text-4xl inline-block floaty">🔤</span>
-                <p className="font-title text-base mt-2" style={{ color: '#7A6BC4' }}>
-                  단어를 고르고 있어요...
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2.5 mb-5">
-                {words.map((w, i) => (
-                  <button
-                    key={i}
-                    onClick={() => speakWord(w.english + '. ' + w.sentence)}
-                    className="w-full rounded-2xl p-4 text-left transition-all active:scale-98 bg-white flex items-center gap-3"
-                    style={{ boxShadow: '0 3px 10px rgba(61,58,92,0.08)' }}
-                  >
-                    <span className="text-3xl">{w.emoji}</span>
-                    <div className="flex-1">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-title text-xl font-bold" style={{ color: 'var(--ink)' }}>
-                          {w.english}
-                        </span>
-                        <span className="text-sm" style={{ color: 'var(--ink-soft)' }}>
-                          {w.korean}
-                        </span>
-                      </div>
-                      <p className="text-xs mt-0.5" style={{ color: '#7A6BC4' }}>
-                        {w.sentence}
-                      </p>
-                    </div>
-                    <span className="text-lg">🔊</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <button
-              onClick={() => {
-                setShowWords(false);
-                setShowFinish(true);
-              }}
-              className="w-full py-3.5 rounded-full font-title text-base font-bold transition-all active:scale-98"
-              style={{
-                background: 'linear-gradient(135deg, var(--star-gold), var(--peach-soft))',
-                color: 'var(--night-deep)',
-              }}
-            >
-              다 배웠어요! ✨
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

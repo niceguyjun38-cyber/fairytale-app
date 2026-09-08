@@ -1,4 +1,5 @@
 'use client';
+import { SiteHeader } from '@/components/SiteHeader';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -52,10 +53,11 @@ export default function LibraryPage() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--paper)' }}>
+    <div className="min-h-screen collection-page" style={{ background: 'var(--paper)' }}>
       {/* 헤더 */}
+      <SiteHeader/>
       <header
-        className="relative px-4 pt-8 pb-12 overflow-hidden"
+        className="page-banner relative px-4 pt-8 pb-12 overflow-hidden"
         style={{
           background: 'linear-gradient(180deg, var(--night-deep) 0%, var(--night) 100%)',
           borderRadius: '0 0 32px 32px',
