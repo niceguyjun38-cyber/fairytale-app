@@ -35,21 +35,23 @@ export default function PlansPage() {
   const plan = wallet?.plan ?? 'free';
   const until = wallet?.planExpiresAt ? new Date(wallet.planExpiresAt) : null;
 
+  const fail = (msg: string) => {
+    setError(msg);
+    window.setTimeout(() => agreeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  };
+
   const buy = async (planId: 'moon' | 'star') => {
     setError('');
     if (!user) { signInWithKakao('/plans').catch(() => {}); return; }
-    if (!agree) {
-      setError('결제 전에 위의 주문 내용 확인에 체크해 주세요.');
-      agreeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return;
-    }
+    if (!agree) { fail('결제 전에 위의 주문 내용 확인에 체크해 주세요.'); return; }
     const clientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
-    if (!clientKey) { setError('결제 준비 중이에요. 조금만 기다려 주세요.'); return; }
+    if (!clientKey) { fail('결제 준비 중이에요. 조금만 기다려 주세요. (C1)'); return; }
+    if (clientKey.includes('_gck_')) { fail('결제 설정을 점검하고 있어요. 잠시 후 다시 시도해 주세요. (C2)'); return; }
     setBusy(planId);
     try {
       const res = await fetch('/api/payments/order', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: planId }) });
-      const order = await res.json();
-      if (!res.ok) throw new Error(order.error);
+      const order = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(order.error || `주문을 만들지 못했어요. (O${res.status})`);
       const Toss = await loadToss();
       const payment = Toss(clientKey).payment({ customerKey: order.customerKey });
       await payment.requestPayment({
@@ -62,8 +64,10 @@ export default function PlansPage() {
         card: { useEscrow: false, flowMode: 'DEFAULT', useCardPoint: false, useAppCardOnly: false },
       });
     } catch (e) {
+      const code = (e as { code?: string })?.code || '';
       const msg = e instanceof Error ? e.message : '';
-      if (!/취소|cancel/i.test(msg)) setError(msg || '결제를 시작하지 못했어요. 다시 시도해 주세요.');
+      if (code === 'USER_CANCEL' || code === 'PAY_PROCESS_CANCELED' || /취소|cancel/i.test(msg)) return;
+      fail(`${msg || '결제를 시작하지 못했어요. 다시 시도해 주세요.'}${code ? ` (${code})` : ''}`);
     } finally {
       setBusy(null);
     }
