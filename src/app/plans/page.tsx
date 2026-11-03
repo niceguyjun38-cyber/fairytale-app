@@ -6,6 +6,7 @@ import { SiteHeader } from '@/components/SiteHeader';
 import { SiteFooter } from '@/components/SiteFooter';
 import { Icon, KakaoIcon } from '@/components/Icon';
 import { PLANS } from '@/data/seedStories';
+import { BUSINESS } from '@/data/business';
 import { useAuth, useWallet } from '@/lib/useAuth';
 
 type TossPayment = { requestPayment: (o: Record<string, unknown>) => Promise<void> };
@@ -87,10 +88,21 @@ export default function PlansPage() {
           </div>
         )}
 
-        <div ref={agreeRef} style={{ maxWidth: 640, margin: '0 auto 30px' }}>
-          <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: '0.9rem', color: '#d3dbee', cursor: 'pointer' }}>
-            <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} style={{ width: 20, height: 20, marginTop: 2, accentColor: '#f5cf80' }} />
-            <span>주문할 이용권의 내용과 <Link href="/terms#refund" style={{ textDecoration: 'underline' }}>환불 정책</Link>, <Link href="/terms" style={{ textDecoration: 'underline' }}>이용약관</Link>을 확인했고 결제에 동의해요.</span>
+        <div ref={agreeRef} className="card-night" style={{ maxWidth: 640, margin: '0 auto 30px', padding: '22px 24px' }}>
+          <h2 className="title-3" style={{ marginBottom: 10 }}>결제 전에 꼭 확인해 주세요</h2>
+          <ul style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.88rem', color: '#c9d2e8', lineHeight: 1.7, listStyle: 'disc', paddingLeft: 18 }}>
+            <li>이용권은 <b style={{ color: '#fff1d6' }}>30일 단위 1회 결제</b>예요. 자동으로 다시 결제되지 않아요.</li>
+            <li>결제 후 <b style={{ color: '#fff1d6' }}>7일 이내, 별가루를 쓰지 않았다면 전액 환불</b>해 드려요.</li>
+            <li>별가루를 일부 썼다면 사용한 만큼을 뺀 금액을 환불해 드려요.</li>
+            <li>환불 문의: {BUSINESS.email} · {BUSINESS.phone}</li>
+          </ul>
+          <p style={{ display: 'flex', gap: 16, margin: '12px 0 16px', fontSize: '0.86rem', fontWeight: 700 }}>
+            <a href="/terms#refund" target="_blank" rel="noopener" style={{ color: 'var(--moon)', textDecoration: 'underline', textUnderlineOffset: 3 }}>환불 정책 전문 보기</a>
+            <a href="/terms" target="_blank" rel="noopener" style={{ color: 'var(--moon)', textDecoration: 'underline', textUnderlineOffset: 3 }}>이용약관 보기</a>
+          </p>
+          <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: '0.92rem', color: '#f2e7cf', cursor: 'pointer', fontWeight: 600 }}>
+            <input type="checkbox" checked={agree} onChange={e => { setAgree(e.target.checked); setError(''); }} style={{ width: 22, height: 22, flexShrink: 0, accentColor: '#f5cf80' }} />
+            <span>위 내용과 이용약관을 확인했고, 결제에 동의해요.</span>
           </label>
           {error && <div className="notice" role="alert" style={{ marginTop: 14 }}>{error}</div>}
         </div>
