@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
+import { WordStudy } from '@/components/WordStudy';
 
 interface PageData {
   id: string;
@@ -216,6 +217,17 @@ const load = async () => {
     }
   };
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (showVoicePicker || document.querySelector('dialog[open]')) return;
+      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); goPrev(); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); goNext(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [currentIdx, pages.length, showVoicePicker]);
+
   if (pages.length === 0) return null;
 
   const page = pages[currentIdx];
@@ -223,7 +235,7 @@ const load = async () => {
 
   return (
     <div
-      className="min-h-screen flex flex-col relative overflow-hidden"
+      className="reader-page min-h-screen flex flex-col relative overflow-hidden"
       style={{ background: 'linear-gradient(180deg, var(--night-deep) 0%, var(--night) 60%, #3A3670 100%)' }}
     >
       <span className="star text-xs" style={{ top: '8%', left: '10%' }}>✦</span>
@@ -251,7 +263,7 @@ const load = async () => {
         onTouchEnd={handleTouchEnd}
       >
         <div
-          className="w-full max-w-sm rounded-3xl overflow-hidden"
+          className="reader-spread w-full max-w-sm rounded-3xl overflow-hidden"
           style={{
             background: 'var(--paper)',
             boxShadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 0 6px rgba(255,201,77,0.15)',
@@ -309,14 +321,14 @@ const load = async () => {
 
       <div className="flex items-center justify-between px-5 py-5 relative">
         <button
-          onClick={goPrev}
+          onClick={goPrev} aria-label="이전 장"
           disabled={currentIdx === 0}
           className="w-12 h-12 rounded-full text-xl transition-all active:scale-90 disabled:opacity-15"
           style={{ background: 'rgba(255,255,255,0.15)', color: 'var(--star-gold)' }}
         >
           ‹
         </button>
-        <div className="flex gap-1.5">
+        <div className="reader-dots flex gap-1.5" aria-label="읽기 진행">
           {pages.map((_, i) => (
             <span key={i} className="text-xs" style={{ opacity: i === currentIdx ? 1 : 0.25 }}>
               ⭐
@@ -324,7 +336,7 @@ const load = async () => {
           ))}
         </div>
         <button
-          onClick={goNext}
+          onClick={goNext} aria-label="다음 장"
           disabled={currentIdx === pages.length - 1}
           className="w-12 h-12 rounded-full text-xl transition-all active:scale-90 disabled:opacity-15"
           style={{ background: 'rgba(255,255,255,0.15)', color: 'var(--star-gold)' }}
@@ -334,6 +346,8 @@ const load = async () => {
       </div>
 
       {/* 목소리 선택 모달 */}
+      <WordStudy storyText={pages.slice(1).map(p => p.ai_text).join(" ")} className="reader-words-open"/>
+
       {showVoicePicker && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center"
