@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { consumeUsage, getServerSupabase } from '@/lib/supabaseServer';
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    const { storyText } = await req.json();
+    const { storyText, storyId } = await req.json();
     if (typeof storyText !== 'string' || !storyText.trim() || storyText.length > 40000) {
       return NextResponse.json({ error: '단어를 고를 동화 내용을 확인해 주세요.' }, { status: 400 });
+    }
+    const supabase = await getServerSupabase();
+    if (!(await consumeUsage(supabase, storyId, 'word'))) {
+      return NextResponse.json({ error: '지금은 단어를 고를 수 없어요. 잠시 후 다시 시도해 주세요.' }, { status: 429 });
     }
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -30,10 +37,12 @@ export async function POST(req: NextRequest) {
 
     const data = await res.json();
     if (data.error) {
-      return NextResponse.json({ error: data.error.message }, { status: 500 });
+      console.error('anthropic words', data.error.message);
+      return NextResponse.json({ error: '동화 속 단어를 고르지 못했어요.' }, { status: 502 });
     }
 
-    const raw = data.content[0].text.replace(/```json|```/g, '').trim();
+    const rawText: string = data.content?.[0]?.text || '';
+    const raw = rawText.slice(rawText.indexOf('['), rawText.lastIndexOf(']') + 1);
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error('단어 형식을 확인하지 못했어요.');
     const seen = new Set<string>();
@@ -50,7 +59,8 @@ export async function POST(req: NextRequest) {
     if (!words.length) throw new Error('이야기 속 단어를 찾지 못했어요. 다시 시도해 주세요.');
 
     return NextResponse.json({ words });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (e) {
+    console.error('words', e);
+    return NextResponse.json({ error: '동화 속 단어를 고르지 못했어요. 다시 시도해 주세요.' }, { status: 500 });
   }
 }

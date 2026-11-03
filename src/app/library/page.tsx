@@ -1,165 +1,137 @@
 'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { SiteHeader } from '@/components/SiteHeader';
-
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { SiteFooter } from '@/components/SiteFooter';
+import { BookCard } from '@/components/BookCard';
+import { Icon, KakaoIcon } from '@/components/Icon';
+import { SEED_STORIES } from '@/data/seedStories';
 import { createClient } from '@/lib/supabase';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth, useWallet } from '@/lib/useAuth';
+import { shareStory } from '@/lib/share';
 
-interface Fairytale {
-  id: string;
-  title: string;
-  cover_image_url: string | null;
-  is_public: boolean;
-  like_count: number;
-  total_pages: number;
-  created_at: string;
-}
+type Row = {
+  id: string; title: string; cover_image_url: string | null; is_public: boolean; like_count: number; view_count: number;
+  total_pages: number; status: string; seed_story_id: number; draft_parts: unknown[] | null; created_at: string;
+};
 
 export default function LibraryPage() {
-  const router = useRouter();
-  const { user, loading: authLoading } = useAuth();
-  const [tales, setTales] = useState<Fairytale[]>([]);
-  const [loading, setLoading] = useState(true);
-  const supabase = createClient();
+  const { user, loading, signInWithKakao } = useAuth();
+  const { wallet } = useWallet(user);
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [error, setError] = useState('');
+  const [toast, setToast] = useState('');
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      router.push('/');
-      return;
-    }
-    loadTales();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, authLoading]);
-
-  const loadTales = async () => {
-    const { data } = await supabase
+    if (!user) return;
+    createClient()
       .from('fairytales')
-      .select('*')
-      .eq('user_id', user!.id)
-      .eq('status', 'completed')
-      .order('created_at', { ascending: false });
-    setTales(data || []);
-    setLoading(false);
+      .select('id, title, cover_image_url, is_public, like_count, view_count, total_pages, status, seed_story_id, draft_parts, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .then(({ data, error: e }) => (e ? setError('서재를 불러오지 못했어요.') : setRows((data as Row[]) || [])));
+  }, [user]);
+
+  const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(''), 2600); };
+
+  const togglePublic = async (r: Row) => {
+    const next = !r.is_public;
+    setRows(list => list?.map(x => (x.id === r.id ? { ...x, is_public: next } : x)) ?? null);
+    const { error: e } = await createClient().from('fairytales').update({ is_public: next }).eq('id', r.id);
+    if (e) { setRows(list => list?.map(x => (x.id === r.id ? { ...x, is_public: !next } : x)) ?? null); flash('공개 설정을 바꾸지 못했어요.'); return; }
+    flash(next ? '친구들 책장에 꽂았어요!' : '나만 보는 책으로 바꿨어요.');
   };
 
-  const togglePublic = async (tale: Fairytale) => {
-    await supabase
-      .from('fairytales')
-      .update({ is_public: !tale.is_public })
-      .eq('id', tale.id);
-    loadTales();
+  const remove = async (r: Row) => {
+    if (!confirm(`「${r.title}」을(를) 서재에서 지울까요? 지운 책은 되돌릴 수 없어요.`)) return;
+    const { error: e } = await createClient().from('fairytales').delete().eq('id', r.id);
+    if (e) { flash('지우지 못했어요. 다시 시도해 주세요.'); return; }
+    setRows(list => list?.filter(x => x.id !== r.id) ?? null);
   };
+
+  const books = rows?.filter(r => r.status === 'completed') ?? [];
+  const drafts = rows?.filter(r => r.status !== 'completed') ?? [];
 
   return (
-    <div className="min-h-screen collection-page" style={{ background: 'var(--paper)' }}>
-      {/* 헤더 */}
-      <SiteHeader/>
-      <header
-        className="page-banner relative px-4 pt-8 pb-12 overflow-hidden"
-        style={{
-          background: 'linear-gradient(180deg, var(--night-deep) 0%, var(--night) 100%)',
-          borderRadius: '0 0 32px 32px',
-        }}
-      >
-        <span className="star text-xs" style={{ top: '25%', left: '80%' }}>✦</span>
-        <span className="star text-[9px]" style={{ top: '55%', left: '10%', animationDelay: '1s' }}>✧</span>
-        <div className="max-w-md mx-auto relative">
-          <button
-            onClick={() => router.push('/')}
-            className="text-sm font-bold mb-3"
-            style={{ color: 'var(--lavender)' }}
-          >
-            ← 처음으로
-          </button>
-          <h1 className="font-title text-white text-3xl">📚 내 서재</h1>
-          <p className="text-xs mt-1" style={{ color: 'var(--lavender)' }}>
-            내가 만든 이야기들이 잠들어 있는 곳
-          </p>
+    <div className="night-page">
+      <SiteHeader credits={wallet?.credits ?? null} authUser={user} />
+      <main className="container">
+        <div className="page-head">
+          <div>
+            <span className="eyebrow"><Icon name="library" size={15} /> 내 서재</span>
+            <h1 className="title-1" style={{ marginTop: 8 }}>우리 아이가 쓴 책들</h1>
+            <p className="lead">만든 그림책은 여기에 차곡차곡 쌓여요. 언제든 다시 꺼내 읽고 들을 수 있어요.</p>
+          </div>
+          {user && <Link href="/start" className="btn btn-gold"><Icon name="sparkles" size={18} /> 새 이야기 만들기</Link>}
         </div>
-      </header>
 
-      <main className="max-w-md mx-auto px-4 py-6 pb-20">
-        {loading ? (
-          <div className="text-center py-16">
-            <span className="text-4xl inline-block floaty">📖</span>
-            <p className="font-title text-base mt-2" style={{ color: '#7A6BC4' }}>
-              서재를 열고 있어요...
-            </p>
+        {!loading && !user ? (
+          <div className="empty card-night">
+            <div className="big">📚</div>
+            <h2 className="title-2">로그인하면 서재가 열려요</h2>
+            <p className="lead">카카오로 로그인하고 첫 그림책을 만들어 보세요. 별가루 2개를 선물로 드려요.</p>
+            <button className="kakao-btn lg" style={{ marginTop: 22 }} onClick={() => signInWithKakao('/library').catch(() => {})}><KakaoIcon /> 카카오로 시작하기</button>
           </div>
-        ) : tales.length === 0 ? (
-          <div className="text-center py-16">
-            <span className="text-5xl block mb-3">🌱</span>
-            <p className="font-title text-xl mb-2" style={{ color: 'var(--ink)' }}>
-              아직 이야기가 없어요
-            </p>
-            <p className="text-xs mb-6" style={{ color: 'var(--ink-soft)' }}>
-              첫 번째 동화를 만들어볼까요?
-            </p>
-            <button
-              onClick={() => router.push('/')}
-              className="px-8 py-3.5 rounded-full font-title text-base font-bold"
-              style={{
-                background: 'linear-gradient(135deg, var(--star-gold), var(--peach-soft))',
-                color: 'var(--night-deep)',
-              }}
-            >
-              ✨ 동화 만들러 가기
-            </button>
-          </div>
+        ) : error ? (
+          <div className="notice" role="alert" style={{ marginBottom: 60 }}>{error}</div>
+        ) : !rows ? (
+          <div className="loading-screen" style={{ minHeight: '40vh' }}><div><div className="moon-loader" />서재 문을 여는 중…</div></div>
         ) : (
-          <div className="grid grid-cols-2 gap-4">
-            {tales.map((tale) => (
-              <div
-                key={tale.id}
-                className="rounded-3xl overflow-hidden bg-white"
-                style={{ boxShadow: '0 4px 16px rgba(61,58,92,0.1)' }}
-              >
-                <button
-                  onClick={() => router.push(`/library/${tale.id}`)}
-                  className="w-full"
-                >
-                  <div
-                    className="w-full aspect-square flex items-center justify-center"
-                    style={{ background: 'var(--lavender-light)' }}
-                  >
-                    {tale.cover_image_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={tale.cover_image_url}
-                        alt={tale.title}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-4xl">📖</span>
-                    )}
-                  </div>
-                  <div className="p-3 text-left">
-                    <p className="font-title text-sm font-bold truncate" style={{ color: 'var(--ink)' }}>
-                      {tale.title}
-                    </p>
-                    <p className="text-[10px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
-                      {tale.total_pages}장 · ❤️ {tale.like_count}
-                    </p>
-                  </div>
-                </button>
-                <button
-                  onClick={() => togglePublic(tale)}
-                  className="w-full py-2 text-[11px] font-bold border-t"
-                  style={{
-                    borderColor: '#F0EDF8',
-                    color: tale.is_public ? '#E8A020' : '#9A94B8',
-                    background: tale.is_public ? '#FFF8E8' : 'white',
-                  }}
-                >
-                  {tale.is_public ? '🌟 공개 중' : '🔒 나만 보기'}
-                </button>
+          <>
+            {drafts.length > 0 && (
+              <section aria-label="만들던 이야기">
+                <h2 className="title-3" style={{ marginBottom: 12 }}>만들던 이야기</h2>
+                <div className="draft-list">
+                  {drafts.map(d => {
+                    const seed = SEED_STORIES.find(s => s.id === d.seed_story_id) || SEED_STORIES[0];
+                    const written = Array.isArray(d.draft_parts) ? d.draft_parts.length : 0;
+                    const ready = written >= d.total_pages;
+                    return (
+                      <div key={d.id} className="draft-row card-night">
+                        <span className="d-emoji" aria-hidden="true">{seed.emoji}</span>
+                        <div>
+                          <strong>{d.title === '만들고 있는 이야기' ? seed.title : d.title}</strong>
+                          <small>{ready ? '이야기 완성 · 그림을 기다려요' : `${written} / ${d.total_pages}장까지 썼어요`}</small>
+                        </div>
+                        <Link href={ready ? `/book?story=${d.id}` : `/create?story=${d.id}`} className="btn btn-gold btn-sm">
+                          {ready ? '그림책 완성하기' : '이어서 쓰기'}
+                        </Link>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+            {books.length === 0 ? (
+              drafts.length === 0 && (
+                <div className="empty card-night">
+                  <div className="big">🌱</div>
+                  <h2 className="title-2">아직 서재가 비어 있어요</h2>
+                  <p className="lead">오늘 밤, 첫 번째 그림책을 만들어 볼까요?</p>
+                  <Link href="/start" className="btn btn-gold btn-lg"><Icon name="sparkles" /> 첫 동화 만들기</Link>
+                </div>
+              )
+            ) : (
+              <div className="book-grid">
+                {books.map(b => (
+                  <BookCard key={b.id} book={b} href={`/story/${b.id}`} badge={b.is_public ? '공개' : '나만 보기'}>
+                    <div className="book-actions">
+                      <button className={b.is_public ? 'public' : ''} onClick={() => togglePublic(b)}>
+                        {b.is_public ? '공개 중' : '공개하기'}
+                      </button>
+                      <button onClick={() => (b.is_public ? shareStory(b.id, b.title).then(r => r && flash(r)) : flash('공개해야 링크로 보여줄 수 있어요.'))}>공유</button>
+                      <button className="danger" onClick={() => remove(b)}>지우기</button>
+                    </div>
+                  </BookCard>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </main>
+      <SiteFooter />
+      {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
 }

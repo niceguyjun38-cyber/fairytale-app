@@ -1,613 +1,224 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { SEED_STORIES } from '@/data/seedStories';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { StoryReader, type ReaderPage } from '@/components/StoryReader';
+import { Icon } from '@/components/Icon';
+import { SEED_STORIES, type SeedStory } from '@/data/seedStories';
 import { createClient } from '@/lib/supabase';
-import { WordStudy } from '@/components/WordStudy';
+import { useAuth } from '@/lib/useAuth';
+import { shareStory } from '@/lib/share';
 
-interface BookPageData {
-  tag: string;
-  text: string;
-  imageUrl: string | null;
-  isLoading: boolean;
-}
+type Part = { user: string; ai: string };
+const PARALLEL = 2;
 
-interface CompletedStory {
-  seedId: number;
-  title: string;
-  totalPages: number;
-  parts: { user: string; ai: string }[];
-}
-
-const VOICES = [
-  { id: 'wizard', emoji: '🧙', name: '마법사 할아버지' },
-  { id: 'princess', emoji: '👸', name: '공주님' },
-  { id: 'bear', emoji: '🧸', name: '곰돌이' },
-  { id: 'fairy', emoji: '🌟', name: '요정 언니' },
-];
-
-const PREVIEW_TEXT = '옛날 옛날에, 반짝이는 별 하나가 있었어요.';
-
-// base64 데이터 URL을 Blob으로 변환
-function dataUrlToBlob(dataUrl: string): Blob {
-  const [header, base64] = dataUrl.split(',');
-  const mimeMatch = header.match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return new Blob([bytes], { type: mime });
-}
-
-export default function BookViewer() {
+function Book() {
   const router = useRouter();
-  const [story, setStory] = useState<CompletedStory | null>(null);
-  const [pages, setPages] = useState<BookPageData[]>([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [imgProgress, setImgProgress] = useState({ current: 0, total: 0, done: false });
-  const [touchStartX, setTouchStartX] = useState(0);
-  const [showFinish, setShowFinish] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState('');
+  const params = useSearchParams();
+  const storyId = params.get('story') || '';
+  const { user, loading: authLoading, signInWithKakao } = useAuth();
 
-  const [showVoicePicker, setShowVoicePicker] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [ttsLoading, setTtsLoading] = useState(false);
-  const [previewing, setPreviewing] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
-  const autoPlayRef = useRef(false);
-  const pagesRef = useRef<BookPageData[]>([]);
-  const audioCacheRef = useRef<Map<string, string>>(new Map());
+  const [seed, setSeed] = useState<SeedStory | null>(null);
+  const [title, setTitle] = useState('');
+  const [pages, setPages] = useState<ReaderPage[]>([]);
+  const [loadError, setLoadError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [isPublic, setIsPublic] = useState(false);
+  const [toast, setToast] = useState('');
 
-  useEffect(() => {
-    pagesRef.current = pages;
-  }, [pages]);
+  const pagesRef = useRef<ReaderPage[]>([]);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const started = useRef(false);
+  const savingRef = useRef(false);
 
-  useEffect(() => {
-    const saved = sessionStorage.getItem('completedStory');
-    if (!saved) {
-      router.push('/');
-      return;
-    }
-    const data: CompletedStory = JSON.parse(saved);
-    setStory(data);
-
-    const seed = SEED_STORIES.find((s) => s.id === data.seedId) || SEED_STORIES[0];
-
-    const initialPages: BookPageData[] = [
-      { tag: '표지', text: data.title, imageUrl: null, isLoading: true },
-      { tag: '시작 이야기', text: seed.preview, imageUrl: null, isLoading: true },
-      ...data.parts.map((p, i) => ({
-        tag: `${i + 1}장`,
-        text: p.ai,
-        imageUrl: null,
-        isLoading: true,
-      })),
-    ];
-    setPages(initialPages);
-    generateImages(initialPages, seed.character, data.title);
-
-    return () => {
-      autoPlayRef.current = false;
-      audioRef.current?.pause();
-      previewAudioRef.current?.pause();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const update = useCallback((i: number, patch: Partial<ReaderPage>) => {
+    const next = pagesRef.current.map((p, k) => (k === i ? { ...p, ...patch } : p));
+    pagesRef.current = next;
+    setPages(next);
   }, []);
 
-  const generateImages = async (pageList: BookPageData[], character: string, title: string) => {
-    setImgProgress({ current: 0, total: pageList.length, done: false });
-    for (let i = 0; i < pageList.length; i++) {
-      setImgProgress({ current: i + 1, total: pageList.length, done: false });
-      try {
-        const res = await fetch('/api/image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            character,
-            sceneText: pageList[i].text,
-            isCover: i === 0,
-            title,
-          }),
-        });
-        const data = await res.json();
-        setPages((prev) => {
-          const next = [...prev];
-          next[i] = { ...next[i], imageUrl: data.url || null, isLoading: false };
-          return next;
-        });
-      } catch {
-        setPages((prev) => {
-          const next = [...prev];
-          next[i] = { ...next[i], isLoading: false };
-          return next;
-        });
-      }
-    }
-    setImgProgress((p) => ({ ...p, done: true }));
-  };
+  const persistImages = useCallback(() => {
+    const images = pagesRef.current.map(p => p.imageUrl);
+    queue.current = queue.current.then(() => createClient().from('fairytales').update({ draft_images: images }).eq('id', storyId));
+  }, [storyId]);
 
-  const fetchAudio = async (voiceId: string, pageIdx: number): Promise<string | null> => {
-    const key = `${voiceId}-${pageIdx}`;
-    if (audioCacheRef.current.has(key)) {
-      return audioCacheRef.current.get(key)!;
-    }
-    const pageList = pagesRef.current;
-    if (pageIdx >= pageList.length) return null;
+  const finalize = useCallback(async (pub?: boolean) => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaveError('');
     try {
-      const res = await fetch('/api/tts', {
+      await queue.current;
+      const res = await fetch('/api/finish-story', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: pageList[pageIdx].text, voice: voiceId }),
+        body: JSON.stringify({ storyId, title: pagesRef.current[0]?.text, pages: pagesRef.current.map(p => ({ text: p.text, imageUrl: p.imageUrl })), isPublic: pub }),
       });
-      if (!res.ok) return null;
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      audioCacheRef.current.set(key, url);
-      return url;
-    } catch {
-      return null;
-    }
-  };
-
-  const playFromPage = async (voiceId: string, pageIdx: number) => {
-    const pageList = pagesRef.current;
-    if (pageIdx >= pageList.length) {
-      setIsPlaying(false);
-      autoPlayRef.current = false;
-      setShowFinish(true);
-      return;
-    }
-
-    setCurrentIdx(pageIdx);
-    setTtsLoading(true);
-
-    const url = await fetchAudio(voiceId, pageIdx);
-    setTtsLoading(false);
-
-    if (!url) {
-      autoPlayRef.current = false;
-      setIsPlaying(false);
-      alert('음성 생성에 실패했어요. 다시 시도해주세요.');
-      return;
-    }
-
-    fetchAudio(voiceId, pageIdx + 1);
-
-    const audio = new Audio(url);
-    audioRef.current = audio;
-
-    audio.onended = () => {
-      if (autoPlayRef.current) {
-        setTimeout(() => {
-          if (autoPlayRef.current) playFromPage(voiceId, pageIdx + 1);
-        }, 600);
-      } else {
-        setIsPlaying(false);
-      }
-    };
-
-    audio.play();
-    setIsPlaying(true);
-  };
-
-  const previewVoice = async (voiceId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    previewAudioRef.current?.pause();
-    setPreviewing(voiceId);
-    try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: PREVIEW_TEXT, voice: voiceId }),
-      });
-      if (!res.ok) throw new Error();
-      const blob = await res.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
-      previewAudioRef.current = audio;
-      audio.onended = () => setPreviewing(null);
-      audio.play();
-    } catch {
-      setPreviewing(null);
-    }
-  };
-
-  const handleVoiceSelect = (voiceId: string) => {
-    previewAudioRef.current?.pause();
-    setShowVoicePicker(false);
-    autoPlayRef.current = true;
-    playFromPage(voiceId, currentIdx);
-  };
-
-  const stopPlaying = () => {
-    autoPlayRef.current = false;
-    audioRef.current?.pause();
-    setIsPlaying(false);
-  };
-
-  const goPrev = () => {
-    stopPlaying();
-    setCurrentIdx((i) => Math.max(0, i - 1));
-  };
-  const goNext = () => {
-    stopPlaying();
-    if (currentIdx === pages.length - 1) {
-      setShowFinish(true);
-      return;
-    }
-    setCurrentIdx((i) => Math.min(pages.length - 1, i + 1));
-  };
-
-  const handleTouchStart = (e: React.TouchEvent) => setTouchStartX(e.touches[0].clientX);
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const dx = e.changedTouches[0].clientX - touchStartX;
-    if (Math.abs(dx) > 50) {
-      if (dx < 0) goNext();
-      else goPrev();
-    }
-  };
-
-  // 저장: 이미지는 브라우저에서 직접 Storage에 업로드
-  const handlePublish = async (isPublic: boolean) => {
-    if (saving || !imgProgress.done) return;
-    setSaving(true);
-    setSaveStatus('준비 중...');
-
-    try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        alert('로그인하면 동화를 서재에 보관할 수 있어요! 메인에서 카카오 로그인 해주세요 😊');
-        router.push('/');
-        return;
-      }
-
-      const storyId = crypto.randomUUID();
-      const list = pagesRef.current;
-      const uploaded: (string | null)[] = [];
-
-      // 1. 이미지 하나씩 Storage에 업로드
-      for (let i = 0; i < list.length; i++) {
-        setSaveStatus(`그림 저장 중... (${i + 1}/${list.length})`);
-        const img = list[i].imageUrl;
-        if (!img || !img.startsWith('data:image')) {
-          uploaded.push(img && img.startsWith('http') ? img : null);
-          continue;
-        }
-        try {
-          const blob = dataUrlToBlob(img);
-          const path = `${storyId}/page-${i}.png`;
-          const { error: upErr } = await supabase.storage
-            .from('story-images')
-            .upload(path, blob, { contentType: 'image/png', upsert: true });
-          if (upErr) {
-            uploaded.push(null);
-            continue;
-          }
-          const { data: urlData } = supabase.storage
-            .from('story-images')
-            .getPublicUrl(path);
-          uploaded.push(urlData.publicUrl);
-        } catch {
-          uploaded.push(null);
-        }
-      }
-
-      // 2. 텍스트 + 이미지 주소만 서버로 전송 (가벼움)
-      setSaveStatus('이야기 저장 중...');
-      const res = await fetch('/api/save-story', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          storyId,
-          title: story!.title,
-          seedId: story!.seedId,
-          totalPages: story!.totalPages,
-          isPublic,
-          pages: list.map((p, i) => ({ text: p.text, imageUrl: uploaded[i] })),
-        }),
-      });
-
-      // 응답이 JSON이 아닐 경우도 안전하게 처리
-      const raw = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        throw new Error(`서버 응답 오류 (${res.status})`);
-      }
-
-      if (!res.ok || data.error) {
-        if (res.status === 401) {
-          alert('로그인이 필요해요! 메인에서 카카오 로그인 해주세요 😊');
-          router.push('/');
-          return;
-        }
-        throw new Error(data.error || `저장 실패 (${res.status})`);
-      }
-
-      alert(isPublic ? '🌟 동화가 모두에게 공개됐어요!' : '🔒 내 서재에 저장됐어요!');
-      sessionStorage.removeItem('completedStory');
-      router.push('/library');
-    } catch (e: any) {
-      alert('저장 오류: ' + e.message);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error);
+      setSaved(true);
+      return true;
+    } catch (e) {
+      setSaveError(e instanceof Error && e.message ? e.message : '서재에 저장하지 못했어요.');
+      return false;
     } finally {
-      setSaving(false);
-      setSaveStatus('');
+      savingRef.current = false;
     }
+  }, [storyId]);
+
+  const draw = useCallback(async (i: number, s: SeedStory, bookTitle: string) => {
+    update(i, { imageState: 'drawing' });
+    try {
+      const res = await fetch('/api/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storyId, pageIndex: i, sceneText: pagesRef.current[i].text, isCover: i === 0, title: bookTitle, seedId: s.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) throw new Error(data.error);
+      update(i, { imageUrl: data.url, imageState: 'ready' });
+      persistImages();
+      // 그림이 모두 완성되면 자동으로 서재에 저장
+      if (pagesRef.current.every(p => p.imageState === 'ready')) finalize();
+    } catch {
+      update(i, { imageState: 'failed' });
+    }
+  }, [finalize, persistImages, storyId, update]);
+
+  const drawAll = useCallback(async (s: SeedStory, bookTitle: string) => {
+    const todo = pagesRef.current.map((p, i) => (p.imageUrl ? -1 : i)).filter(i => i >= 0);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < todo.length) {
+        const i = todo[cursor++];
+        await draw(i, s, bookTitle);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, todo.length) }, worker));
+  }, [draw]);
+
+
+  // 초안 불러오기 → 그림 그리기
+  useEffect(() => {
+    if (authLoading || started.current) return;
+    if (!storyId) { router.replace('/library'); return; }
+    if (!user) { signInWithKakao(`/book?story=${storyId}`).catch(() => setLoadError('로그인이 필요해요.')); return; }
+    started.current = true;
+    createClient()
+      .from('fairytales')
+      .select('id, user_id, title, seed_story_id, total_pages, status, draft_parts, draft_images, is_public')
+      .eq('id', storyId)
+      .single()
+      .then(({ data, error }) => {
+        if (error || !data || data.user_id !== user.id) { setLoadError('그림책을 찾을 수 없어요.'); return; }
+        if (data.status === 'completed') { router.replace(`/story/${storyId}`); return; }
+        const parts: Part[] = Array.isArray(data.draft_parts) ? data.draft_parts : [];
+        if (parts.length < (data.total_pages || 8)) { router.replace(`/create?story=${storyId}`); return; }
+        const s = SEED_STORIES.find(x => x.id === data.seed_story_id) || SEED_STORIES[0];
+        const images: (string | null)[] = Array.isArray(data.draft_images) ? data.draft_images : [];
+        const bookTitle = data.title || s.title;
+        const list: ReaderPage[] = [
+          { tag: '표지', text: bookTitle },
+          { tag: '이야기의 시작', text: s.preview },
+          ...parts.map((p, i) => ({ tag: `${i + 1}번째 장`, text: p.ai })),
+        ].map((p, i) => ({ ...p, imageUrl: images[i] || null, imageState: images[i] ? 'ready' : 'waiting' }));
+        pagesRef.current = list;
+        setSeed(s);
+        setTitle(bookTitle);
+        setIsPublic(!!data.is_public);
+        setPages(list);
+        if (list.every(p => p.imageUrl)) finalize();
+        else drawAll(s, bookTitle);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user?.id, storyId]);
+
+  const drawn = pages.filter(p => p.imageState === 'ready').length;
+  const failed = pages.filter(p => p.imageState === 'failed').length;
+  const pending = pages.length - drawn - failed;
+
+  const retry = (i: number) => seed && draw(i, seed, title);
+  const retryAll = () => seed && pages.forEach((p, i) => p.imageState === 'failed' && draw(i, seed, title));
+
+  const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(''), 2600); };
+
+  const togglePublic = async () => {
+    const next = !isPublic;
+    if (!saved) { const ok = await finalize(next); if (ok) setIsPublic(next); return; }
+    const { error } = await createClient().from('fairytales').update({ is_public: next }).eq('id', storyId);
+    if (error) { flash('공개 설정을 바꾸지 못했어요.'); return; }
+    setIsPublic(next);
+    flash(next ? '친구들 책장에 꽂았어요!' : '나만 보는 책으로 바꿨어요.');
   };
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (showFinish || showVoicePicker || document.querySelector('dialog[open]')) return;
-      if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
-      if (event.key === 'ArrowLeft') { event.preventDefault(); goPrev(); }
-      if (event.key === 'ArrowRight') { event.preventDefault(); goNext(); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [currentIdx, pages.length, showFinish, showVoicePicker]);
+  if (loadError) {
+    return (
+      <div className="night-page"><main className="container"><div className="empty card-night" style={{ marginTop: 60 }}><div className="big">🌙</div><h1 className="title-2">{loadError}</h1><Link href="/library" className="btn btn-gold">내 서재로 가기</Link></div></main></div>
+    );
+  }
+  if (!seed || !pages.length) {
+    return <div className="night-page"><div className="loading-screen"><div><div className="moon-loader" />그림책을 펼치는 중이에요…</div></div></div>;
+  }
 
-  if (!story || pages.length === 0) return null;
-
-  const page = pages[currentIdx];
-  const seed = SEED_STORIES.find((s) => s.id === story.seedId) || SEED_STORIES[0];
+  const status = pending > 0
+    ? <><span className="spin" /> 요정 화가가 그림을 그리고 있어요 · {drawn} / {pages.length}장 (먼저 읽어 보셔도 돼요)</>
+    : failed > 0
+      ? <>그림 {failed}장을 그리지 못했어요. <button className="text-btn" style={{ color: 'var(--moon)', textDecoration: 'underline' }} onClick={retryAll}>다시 그리기</button> 또는 <button className="text-btn" style={{ color: 'var(--moon)', textDecoration: 'underline' }} onClick={() => finalize()}>그대로 저장</button></>
+      : saved
+        ? <><Icon name="check" size={15} /> 그림책 완성! 내 서재에 저장했어요.</>
+        : saveError
+          ? <>{saveError} <button className="text-btn" style={{ color: 'var(--moon)', textDecoration: 'underline' }} onClick={() => finalize()}>다시 저장</button></>
+          : <><span className="spin" /> 서재에 꽂는 중…</>;
 
   return (
-    <div
-      className="reader-page min-h-screen flex flex-col relative overflow-hidden"
-      style={{ background: 'linear-gradient(180deg, var(--night-deep) 0%, var(--night) 60%, #3A3670 100%)' }}
-    >
-      <span className="star text-xs" style={{ top: '8%', left: '10%' }}>✦</span>
-      <span className="star text-[10px]" style={{ top: '12%', left: '88%', animationDelay: '0.6s' }}>✧</span>
-      <span className="star text-sm" style={{ top: '45%', left: '5%', animationDelay: '1.4s' }}>⋆</span>
-      <span className="star text-[9px]" style={{ top: '70%', left: '92%', animationDelay: '0.9s' }}>✦</span>
-
-      <header className="flex items-center justify-between px-5 py-4 relative">
-        <button
-          onClick={() => router.push('/')}
-          className="text-sm font-bold"
-          style={{ color: 'var(--lavender)' }}
-        >
-          ✕ 닫기
-        </button>
-        <span className="font-title text-lg" style={{ color: 'var(--star-gold)' }}>
-          {story.title}
-        </span>
-        <span className="text-xs" style={{ color: 'var(--lavender)' }}>
-          {currentIdx + 1} / {pages.length}
-        </span>
-      </header>
-
-      {!imgProgress.done && imgProgress.total > 0 && (
-        <div className="px-5 pb-2 relative">
-          <p className="text-xs text-center mb-1.5" style={{ color: 'var(--lavender)' }}>
-            🎨 요정 화가가 그림 그리는 중... ({imgProgress.current}/{imgProgress.total})
-          </p>
-          <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }}>
-            <div
-              className="h-1.5 rounded-full transition-all duration-500"
-              style={{
-                background: 'linear-gradient(90deg, var(--star-gold), var(--peach-soft))',
-                width: `${(imgProgress.current / imgProgress.total) * 100}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      <div
-        className="flex-1 flex items-center justify-center px-5 py-3 relative"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-      >
-        <div
-          className="reader-spread w-full max-w-sm rounded-3xl overflow-hidden"
-          style={{
-            background: 'var(--paper)',
-            boxShadow: '0 16px 48px rgba(0,0,0,0.45), 0 0 0 6px rgba(255,201,77,0.15)',
-          }}
-        >
-          <div
-            className="w-full aspect-[4/3] flex items-center justify-center"
-            style={{ background: 'var(--lavender-light)' }}
-          >
-            {page.isLoading ? (
-              <span className="text-5xl floaty">{seed.emoji}</span>
-            ) : page.imageUrl ? (
+    <>
+      <StoryReader
+        title={title}
+        emoji={seed.emoji}
+        storyId={storyId}
+        pages={pages}
+        closeHref="/library"
+        closeLabel="서재로 가기"
+        status={status}
+        onRetryImage={retry}
+        onFinished={() => setFinishOpen(true)}
+        actions={<button className="btn btn-ghost" onClick={() => setFinishOpen(true)}><Icon name="check" size={18} /> 완성!</button>}
+      />
+      {finishOpen && (
+        <div className="overlay" onClick={() => setFinishOpen(false)}>
+          <div className="sheet card-paper done-card" role="dialog" aria-modal="true" aria-labelledby="done-title" onClick={e => e.stopPropagation()}>
+            <div className="sheet-head"><span /><button className="sheet-close" onClick={() => setFinishOpen(false)} aria-label="닫기"><Icon name="close" size={18} /></button></div>
+            {pages[0].imageUrl
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={page.imageUrl} alt={page.tag} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-5xl">{seed.emoji}</span>
-            )}
-          </div>
-          <div className="p-5">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-bold tracking-widest" style={{ color: '#7A6BC4' }}>
-                ✦ {page.tag} ✦
-              </p>
-              {isPlaying ? (
-                <button
-                  onClick={stopPlaying}
-                  className="text-xs font-bold px-3 py-1.5 rounded-full"
-                  style={{ background: '#FF7B7B', color: 'white' }}
-                >
-                  ⏸ 멈추기
-                </button>
-              ) : (
-                <button
-                  onClick={() => setShowVoicePicker(true)}
-                  disabled={ttsLoading}
-                  className="text-xs font-bold px-3 py-1.5 rounded-full transition-all active:scale-95"
-                  style={{
-                    background: 'linear-gradient(135deg, var(--lavender), #9D8BD8)',
-                    color: 'white',
-                  }}
-                >
-                  {ttsLoading ? '🪄 준비 중...' : '🔊 여기부터 읽어주기'}
-                </button>
-              )}
+              ? <img className="cover-thumb" src={pages[0].imageUrl} alt="" />
+              : <div style={{ fontSize: '3rem' }}>📖</div>}
+            <h2 id="done-title" className="title-2 on-paper" style={{ color: 'var(--ink)' }}>「{title}」 완성!</h2>
+            <p className="sheet-sub" style={{ marginTop: 6 }}>
+              {pending > 0 ? '그림이 다 그려지면 서재에 자동으로 저장돼요.' : saved ? '서재에 저장됐어요. 언제든 다시 꺼내 읽을 수 있어요.' : '서재에 저장하고 있어요.'}
+            </p>
+            <div className="toggle-row">
+              <div><strong>친구들 책장에 공개하기</strong><small>공개하면 다른 꼬마작가들이 읽고 좋아요를 남길 수 있어요</small></div>
+              <button className="switch" role="switch" aria-checked={isPublic} aria-label="공개하기" onClick={togglePublic} disabled={pending > 0} />
             </div>
-            <p
-              className={`leading-loose text-center font-title ${
-                currentIdx === 0 ? 'text-2xl font-bold' : 'text-lg'
-              }`}
-              style={{ color: 'var(--ink)' }}
-            >
-              {page.text}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <p className="text-center text-[11px] pb-1 relative" style={{ color: 'rgba(255,255,255,0.3)' }}>
-        ← 손가락으로 넘겨보세요 →
-      </p>
-
-      <div className="reader-nav flex items-center justify-between px-5 py-4 relative">
-        <button
-          onClick={goPrev}
-          aria-label="이전 장"
-          disabled={currentIdx === 0}
-          className="w-12 h-12 rounded-full text-xl transition-all active:scale-90 disabled:opacity-15"
-          style={{ background: 'rgba(255,255,255,0.15)', color: 'var(--star-gold)' }}
-        >
-          ‹
-        </button>
-        <div className="reader-dots flex gap-1.5" aria-label="읽기 진행">
-          {pages.map((_, i) => (
-            <span key={i} className="text-xs transition-all" style={{ opacity: i === currentIdx ? 1 : 0.25 }}>
-              ⭐
-            </span>
-          ))}
-        </div>
-        <button
-          onClick={goNext}
-          aria-label="다음 장"
-          className="w-12 h-12 rounded-full text-xl transition-all active:scale-90"
-          style={{ background: 'rgba(255,255,255,0.15)', color: 'var(--star-gold)' }}
-        >
-          ›
-        </button>
-      </div>
-
-      {!showFinish && <WordStudy storyText={pages.map(p => p.text).slice(1).join(" ")} autoPrepare className="reader-words-open"/>}
-
-      {/* 목소리 선택 모달 */}
-      {showVoicePicker && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center"
-          style={{ background: 'rgba(0,0,0,0.5)' }}
-          onClick={() => setShowVoicePicker(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-t-3xl p-6 pb-8"
-            style={{ background: 'var(--paper)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="font-title text-xl text-center mb-1" style={{ color: 'var(--ink)' }}>
-              누가 읽어줄까요?
-            </p>
-            <p className="text-xs text-center mb-5" style={{ color: 'var(--ink-soft)' }}>
-              🔊 버튼으로 목소리를 미리 들어보세요
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              {VOICES.map((v) => (
-                <div
-                  key={v.id}
-                  className="rounded-2xl py-4 px-3 text-center bg-white relative"
-                  style={{ boxShadow: '0 3px 10px rgba(61,58,92,0.1)' }}
-                >
-                  <button
-                    onClick={(e) => previewVoice(v.id, e)}
-                    className="absolute top-2 right-2 w-8 h-8 rounded-full text-sm flex items-center justify-center transition-all active:scale-90"
-                    style={{
-                      background: previewing === v.id ? 'var(--star-gold)' : 'var(--lavender-light)',
-                    }}
-                  >
-                    {previewing === v.id ? '🎵' : '🔊'}
-                  </button>
-                  <button onClick={() => handleVoiceSelect(v.id)} className="w-full">
-                    <span className="text-4xl block mb-1.5">{v.emoji}</span>
-                    <span className="text-sm font-bold block" style={{ color: 'var(--ink)' }}>
-                      {v.name}
-                    </span>
-                    <span
-                      className="text-[10px] font-bold mt-1.5 inline-block px-3 py-1 rounded-full"
-                      style={{ background: 'var(--lavender-light)', color: '#7A6BC4' }}
-                    >
-                      이 목소리로 듣기
-                    </span>
-                  </button>
-                </div>
-              ))}
+            <div className="stack">
+              <button className="btn btn-ink btn-block" disabled={!saved} onClick={() => (isPublic ? shareStory(storyId, title).then(r => r && flash(r)) : flash('공개를 켜야 링크를 받은 분도 읽을 수 있어요.'))}><Icon name="share" size={18} /> 할머니께 보내기 (링크 공유)</button>
+              <Link href="/library" className="btn btn-paper btn-block"><Icon name="library" size={18} /> 내 서재로 가기</Link>
+              <Link href="/start" className="btn btn-paper btn-block"><Icon name="sparkles" size={18} /> 새 이야기 만들기</Link>
             </div>
           </div>
         </div>
       )}
+      {toast && <div className="toast" role="status">{toast}</div>}
+    </>
+  );
+}
 
-      {/* 완성 화면 */}
-      {showFinish && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-6"
-          style={{ background: 'rgba(20,20,45,0.85)', backdropFilter: 'blur(4px)' }}
-        >
-          <div
-            className="w-full max-w-sm rounded-3xl p-7 text-center relative overflow-hidden"
-            style={{ background: 'var(--paper)' }}
-          >
-            <span className="absolute top-4 left-5 text-sm star">✦</span>
-            <span className="absolute top-8 right-6 text-xs star" style={{ animationDelay: '0.7s' }}>✧</span>
-            <span className="text-6xl block mb-3">🏆</span>
-            <p className="font-title text-2xl font-bold mb-1" style={{ color: 'var(--ink)' }}>
-              멋진 이야기 완성!
-            </p>
-            <p className="text-xs mb-6 leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
-              「{story.title}」를 다른 친구들에게도
-              <br />
-              보여줄까요?
-            </p>
-
-            <WordStudy storyText={pages.map(p => p.text).slice(1).join(" ")} autoPrepare/>
-
-            <button
-              onClick={() => handlePublish(true)}
-              disabled={saving || !imgProgress.done}
-              className="w-full py-4 rounded-full font-title text-lg font-bold mb-2.5 transition-all active:scale-98"
-              style={{
-                background: 'linear-gradient(135deg, var(--star-gold), var(--peach-soft))',
-                color: 'var(--night-deep)',
-                boxShadow: '0 6px 18px rgba(255,201,77,0.4)',
-                opacity: saving ? 0.6 : 1,
-              }}
-            >
-              {saving ? saveStatus || '저장 중...' : !imgProgress.done ? '그림을 완성하고 있어요…' : '🌟 모두에게 공개하기'}
-            </button>
-            <button
-              onClick={() => handlePublish(false)}
-              disabled={saving || !imgProgress.done}
-              className="w-full py-3.5 rounded-full font-title text-base font-bold mb-2.5 transition-all active:scale-98"
-              style={{ border: '2px solid var(--lavender)', color: '#7A6BC4', opacity: saving ? 0.6 : 1 }}
-            >
-              {saving ? saveStatus || '저장 중...' : !imgProgress.done ? '그림을 완성하고 있어요…' : '🔒 내 서재에 비공개로 저장'}
-            </button>
-            <button
-              onClick={() => setShowFinish(false)}
-              disabled={saving}
-              className="text-xs font-bold"
-              style={{ color: 'var(--ink-soft)' }}
-            >
-              다시 읽어보기
-            </button>
-          </div>
-        </div>
-      )}
-
-
-    </div>
+export default function BookPage() {
+  return (
+    <Suspense fallback={<div className="night-page"><div className="loading-screen"><div><div className="moon-loader" />그림책을 펼치는 중이에요…</div></div></div>}>
+      <Book />
+    </Suspense>
   );
 }

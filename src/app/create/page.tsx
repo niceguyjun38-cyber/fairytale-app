@@ -1,137 +1,302 @@
 'use client';
-import { useState, useRef, useEffect, Suspense } from 'react';
+
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { SEED_STORIES, PAGE_OPTIONS } from '@/data/seedStories';
 import { SiteHeader } from '@/components/SiteHeader';
 import { Icon } from '@/components/Icon';
+import { SEED_STORIES, type SeedStory } from '@/data/seedStories';
+import { createClient } from '@/lib/supabase';
+import { useAuth } from '@/lib/useAuth';
 
-type StoryPart = { user: string; ai: string };
-type SpeechResult = { results: { [index: number]: { [index: number]: { transcript: string } } } };
-type SpeechRecognitionLike = {
+type Part = { user: string; ai: string };
+type Recognition = {
   lang: string; continuous: boolean; interimResults: boolean;
-  onresult: ((event: SpeechResult) => void) | null;
+  onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
   onend: (() => void) | null;
-  onerror: ((event: { error: string }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
   start: () => void; stop: () => void; abort: () => void;
 };
-const PROMPTS = [
+
+const IDEAS = [
   '주인공은 지금 어떤 기분일까요? 왜 그런 기분이 들었을까요?',
   '갑자기 아주 작은 소리가 들렸어요. 어디에서 나는 소리일까요?',
+  '주인공 앞에 누가 나타났을까요? 그 친구는 뭐라고 말했을까요?',
   '주인공이 가진 물건 하나에 마법이 생긴다면 무엇을 할 수 있을까요?',
-  '누군가 주인공에게 도움을 부탁한다면, 어떻게 도와줄까요?',
-  '이곳에 딱 하나의 규칙을 만든다면 어떤 규칙이 좋을까요?',
+  '누군가 주인공에게 도움을 부탁했어요. 어떻게 도와줄까요?',
+  '날씨가 갑자기 바뀌었어요. 무슨 일이 벌어졌을까요?',
 ];
-const FIRST_PROMPTS: Record<number, string> = {
-  1: '곰이 오두막 문을 열었을 때, 앞에 무엇이 놓여 있었을까요?',
-  2: '손바닥 위의 별이 처음 건넨 말은 무엇이었을까요?',
-  3: '마법의 빵을 한 입 먹고, 어떤 소원을 빌고 싶나요?',
-  4: '구름 위 친구는 무지개를 무엇으로 만들고 있었을까요?',
-  5: '물고기를 따라간 바다 마을에는 어떤 집이 있었을까요?',
-  6: '로켓 안에서 인사를 건넨 건 누구였을까요?',
-};
 
-function CreateContent() {
+function Studio() {
   const router = useRouter();
   const params = useSearchParams();
-  const seed = SEED_STORIES.find(s => s.id === Number(params.get('seed'))) || SEED_STORIES[0];
-  const requestedPages = Number(params.get('pages'));
-  const totalPages = PAGE_OPTIONS.some(p => p.count === requestedPages) ? requestedPages : 8;
-  const [storyParts, setStoryParts] = useState<StoryPart[]>([]);
-  const [input, setInput] = useState('');
-  const [title, setTitle] = useState(seed.title);
-  const [loading, setLoading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [error, setError] = useState('');
-  const [editingIdx, setEditingIdx] = useState<number | null>(null);
-  const [editText, setEditText] = useState('');
-  const [hintIndex, setHintIndex] = useState(-1);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const submitRef = useRef(false);
-  const composerRef = useRef<HTMLDivElement>(null);
-  const currentPage = storyParts.length;
-  const isDone = currentPage >= totalPages;
-  const isLastPage = currentPage === totalPages - 1;
+  const storyId = params.get('story');
+  const { user, loading: authLoading, signInWithKakao } = useAuth();
 
-  useEffect(() => () => { recognitionRef.current?.abort(); }, []);
+  const [seed, setSeed] = useState<SeedStory | null>(null);
+  const [total, setTotal] = useState(8);
+  const [parts, setParts] = useState<Part[]>([]);
+  const [title, setTitle] = useState('');
+  const [input, setInput] = useState('');
+  const [live, setLive] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [error, setError] = useState('');
+  const [writing, setWriting] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
+  const [idea, setIdea] = useState(-1);
+  const [finishing, setFinishing] = useState(false);
+  const recRef = useRef<Recognition | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const busy = useRef(false);
+
+  // 초안 불러오기
   useEffect(() => {
-    if (currentPage > 0) composerRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'nearest' });
-  }, [currentPage]);
+    if (authLoading) return;
+    if (!storyId) { router.replace('/start'); return; }
+    if (!user) { signInWithKakao(`/create?story=${storyId}`).catch(() => setLoadError('로그인이 필요해요.')); return; }
+    createClient()
+      .from('fairytales')
+      .select('id, user_id, seed_story_id, total_pages, status, draft_parts, title')
+      .eq('id', storyId)
+      .single()
+      .then(({ data, error: e }) => {
+        if (e || !data || data.user_id !== user.id) { setLoadError('이야기를 찾을 수 없어요. 서재에서 다시 열어 주세요.'); return; }
+        if (data.status === 'completed') { router.replace(`/story/${storyId}`); return; }
+        const s = SEED_STORIES.find(x => x.id === data.seed_story_id) || SEED_STORIES[0];
+        setSeed(s);
+        setTotal(data.total_pages || 8);
+        setParts(Array.isArray(data.draft_parts) ? data.draft_parts : []);
+        setTitle(data.title && data.title !== '만들고 있는 이야기' ? data.title : s.title);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user?.id, storyId]);
+
+  useEffect(() => () => recRef.current?.abort(), []);
+
+  const persist = useCallback(async (next: Part[], extra: Record<string, unknown> = {}) => {
+    if (!storyId) return;
+    const { error: e } = await createClient().from('fairytales').update({ draft_parts: next, ...extra }).eq('id', storyId);
+    if (e) setError('작성 내용을 저장하지 못했어요. 인터넷 연결을 확인해 주세요.');
+  }, [storyId]);
+
+  const current = parts.length;
+  const done = current >= total;
+  const isLast = current === total - 1;
+
+  useEffect(() => {
+    if (current > 0) composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [current]);
 
   const toggleMic = () => {
-    if (loading) return;
-    if (isRecording) { recognitionRef.current?.stop(); setIsRecording(false); return; }
-    const speechWindow = window as unknown as {
-      SpeechRecognition?: new () => SpeechRecognitionLike;
-      webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-    };
-    const SR = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
-    if (!SR) { setError('이 브라우저에서는 말하기를 사용할 수 없어요. 글로 입력하거나 음성 인식을 지원하는 브라우저를 이용해 주세요.'); return; }
+    if (recording) { recRef.current?.stop(); return; }
+    const w = window as unknown as { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition };
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) { setError('이 브라우저에서는 말하기를 쓸 수 없어요. 크롬이나 사파리에서 열거나 글로 적어 주세요.'); return; }
     setError('');
-    const recognition = new SR();
-    recognition.lang = 'ko-KR'; recognition.continuous = false; recognition.interimResults = false;
-    recognition.onresult = event => {
-      const said = event.results[0][0].transcript.trim();
-      setInput(previous => `${previous.trim()} ${said}`.trim().slice(0, 1500));
+    const rec = new SR();
+    rec.lang = 'ko-KR';
+    rec.continuous = true;
+    rec.interimResults = true;
+    const base = input.trim();
+    let finalText = '';
+    rec.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setInput(`${base} ${finalText}`.trim().slice(0, 1500));
+      setLive(interim);
     };
-    recognition.onend = () => setIsRecording(false);
-    recognition.onerror = event => {
-      setIsRecording(false);
-      if (event.error !== 'aborted') setError(event.error === 'not-allowed' ? '마이크 사용 권한을 허용해 주세요. 글로 입력해도 괜찮아요.' : '말을 잘 듣지 못했어요. 다시 말하거나 글로 적어 주세요.');
+    rec.onend = () => { setRecording(false); setLive(''); };
+    rec.onerror = e => {
+      setRecording(false);
+      setLive('');
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') setError('마이크 사용을 허용해 주세요. 주소창 옆 자물쇠 버튼에서 바꿀 수 있어요.');
+      else if (e.error !== 'aborted' && e.error !== 'no-speech') setError('말을 잘 듣지 못했어요. 다시 말하거나 글로 적어 주세요.');
     };
-    recognitionRef.current = recognition;
-    try { recognition.start(); setIsRecording(true); }
-    catch { setError('마이크를 시작하지 못했어요. 다시 시도해 주세요.'); }
+    recRef.current = rec;
+    try { rec.start(); setRecording(true); } catch { setError('마이크를 켜지 못했어요. 다시 눌러 주세요.'); }
   };
 
-  const handleContinue = async () => {
-    if (!input.trim() || submitRef.current || isDone || editingIdx !== null) return;
-    submitRef.current = true; setLoading(true); setError('');
-    recognitionRef.current?.stop(); setIsRecording(false);
-    const original = input.trim();
+  const write = async () => {
+    const said = input.trim();
+    if (!said || busy.current || done || !seed) return;
+    busy.current = true;
+    recRef.current?.stop();
+    setWriting(true);
+    setError('');
     try {
       const res = await fetch('/api/story', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context: `${seed.preview} ${storyParts.map(p => p.ai).join(' ')}`, input: original, isLastPage }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storyId, context: [seed.preview, ...parts.map(p => p.ai)].join('\n'), input: said, isLastPage: isLast }),
       });
-      const data = await res.json();
-      if (!res.ok || typeof data.text !== 'string' || !data.text.trim()) throw new Error(data.error || '문장을 다듬지 못했어요. 다시 시도해 주세요.');
-      setStoryParts(previous => [...previous, { user: original, ai: data.text }]);
-      setInput(''); setHintIndex(-1);
-    } catch (e) { setError(e instanceof Error ? e.message : '잠시 후 다시 시도해 주세요. 입력한 이야기는 그대로 남아 있어요.'); }
-    finally { setLoading(false); submitRef.current = false; }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.text) throw new Error(data.error || '문장을 다듬지 못했어요. 다시 눌러 주세요.');
+      const next = [...parts, { user: said, ai: data.text }];
+      setParts(next);
+      setInput('');
+      setIdea(-1);
+      await persist(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '잠시 후 다시 시도해 주세요. 적은 내용은 그대로 남아 있어요.');
+    } finally {
+      busy.current = false;
+      setWriting(false);
+    }
   };
 
-  const saveEdit = () => {
-    if (editingIdx === null || !editText.trim()) return;
-    setStoryParts(previous => previous.map((part, i) => i === editingIdx ? { ...part, ai: editText.trim() } : part));
-    setEditingIdx(null);
+  const saveEdit = async () => {
+    if (editing === null || !editText.trim()) return;
+    const next = parts.map((p, i) => (i === editing ? { ...p, ai: editText.trim() } : p));
+    setParts(next);
+    setEditing(null);
+    await persist(next);
   };
-  const handleFinish = () => {
-    if (!isDone || editingIdx !== null || loading) return;
-    try {
-      sessionStorage.setItem('completedStory', JSON.stringify({ seedId: seed.id, title: title.trim() || seed.title, totalPages: storyParts.length, parts: storyParts }));
-      router.push('/book');
-    } catch { setError('브라우저에 이야기를 전달하지 못했어요. 저장 공간을 확인하고 다시 시도해 주세요.'); }
-  };
-  const leaveStudio = () => {
-    if ((storyParts.length || input.trim()) && !confirm('아직 그림책으로 완성하지 않은 이야기가 있어요. 나가면 작성 내용이 사라져요. 처음으로 돌아갈까요?')) return;
-    router.push('/');
-  };
-  const hint = isLastPage ? '이야기를 어떻게 끝내고 싶나요? 주인공이 마지막으로 하는 말도 들려주세요.' : hintIndex === 0 && currentPage === 0 ? FIRST_PROMPTS[seed.id] : PROMPTS[(Math.max(0, hintIndex) + currentPage) % PROMPTS.length];
 
-  return <><SiteHeader/><main className="studio">
-    <div className="studio-top"><div><h1>우리 이야기 작업실</h1><p>아이의 상상을 한 장씩 이어가요.</p></div><button className="button-secondary" onClick={leaveStudio}><Icon name="back" size={16}/> 처음으로</button></div>
-    <div className="studio-layout">
-      <aside className="studio-sidebar"><div className="studio-seed"><span>이야기의 시작</span><h2>{seed.emoji} {seed.title}</h2><p>{seed.preview}</p></div><div className="studio-progress"><div className="progress-caption"><span>우리가 만든 이야기</span><strong>{currentPage} / {totalPages}장</strong></div><div className="progress-track" role="progressbar" aria-label="동화 작성 진행" aria-valuenow={currentPage} aria-valuemin={0} aria-valuemax={totalPages}><span style={{ width: `${currentPage / totalPages * 100}%` }}/></div><div className="progress-steps" aria-hidden="true">{Array.from({ length: totalPages }, (_, i) => <span key={i} className={i < currentPage ? 'done' : ''}>{i < currentPage ? <Icon name="check" size={13}/> : i + 1}</span>)}</div><p className="studio-help">정답은 없어요. 엉뚱한 생각도, 짧은 한마디도 멋진 이야기의 재료예요.</p></div></aside>
-      <section className="studio-content" aria-label="동화 작성">
-        {storyParts.map((part, i) => <article className="story-entry" key={i}><div className="entry-top"><strong>{String(i + 1).padStart(2, '0')} 번째 장</strong><button onClick={() => { setEditingIdx(i); setEditText(part.ai); }} disabled={loading || editingIdx !== null}><Icon name="pen" size={14}/> 문장 고치기</button></div>{editingIdx === i ? <><textarea className="entry-editor" aria-label={`${i + 1}장 문장 수정`} value={editText} onChange={e => setEditText(e.target.value)} maxLength={1500}/><div className="edit-actions"><button className="button-primary" onClick={saveEdit} disabled={!editText.trim()}>수정 완료</button><button className="button-secondary" onClick={() => setEditingIdx(null)}>취소</button></div></> : <p>{part.ai}</p>}<details className="story-original"><summary>아이가 처음 들려준 말</summary><p>{part.user}</p></details></article>)}
-        <div ref={composerRef}>
-          {isDone ? <div className="finish-panel"><p className="eyebrow"><Icon name="check"/> {totalPages}장 이야기 완성</p><h2>이제 우리 책에 이름을 붙여요.</h2><p>문장을 한 번 더 읽어보고, 마음에 드는 제목을 지어 주세요.</p><label htmlFor="book-title">우리 동화의 제목</label><input id="book-title" value={title} maxLength={70} onChange={e => setTitle(e.target.value)}/><button className="button-primary" onClick={handleFinish} disabled={editingIdx !== null}><Icon name="book"/> 그림책 완성하기</button></div> : <div className="composer"><div className="composer-label"><Icon name="pen" size={18}/> {currentPage + 1}번째 장을 만들어요</div><h2>{isLastPage ? '어떤 마지막 장면을 남길까요?' : currentPage ? '그다음에는 무슨 일이 있었나요?' : '첫 번째 상상을 들려주세요.'}</h2><p className="composer-intro">아이의 말을 적거나, 마이크를 눌러 함께 말해 보세요.</p><textarea aria-label="아이가 이어서 만든 이야기" className="composer-input" placeholder={isLastPage ? '주인공은 마지막에…' : '그리고 주인공은…'} value={input} onChange={e => setInput(e.target.value)} maxLength={1500} disabled={loading}/><div className="composer-tools"><button className={`mic-button ${isRecording ? 'is-recording' : ''}`} onClick={toggleMic} disabled={loading} aria-pressed={isRecording}><Icon name="mic" size={18}/>{isRecording ? '듣고 있어요 · 멈추기' : '말로 들려주기'}</button><span>한두 문장부터 시작해도 좋아요.</span></div><button className="button-primary" onClick={handleContinue} disabled={!input.trim() || loading || isRecording || editingIdx !== null}><Icon name="sparkles"/>{loading ? '아이의 말로 문장을 다듬고 있어요…' : '이 말로 한 장 완성하기'}</button><div className="idea-prompt"><button onClick={() => setHintIndex(i => i + 1)}><Icon name="sparkles" size={16}/>{hintIndex < 0 ? '생각이 막혔나요? 질문 하나 보기' : '다른 질문 보기'}</button>{hintIndex >= 0 && <p aria-live="polite">{hint}</p>}</div></div>}
-          {error && <p className="inline-error" role="alert">{error}</p>}
-          {loading && <p role="status" className="dialog-caption">작성한 이야기를 다듬고 있어요. 잠시만 기다려 주세요.</p>}
+  const undoLast = async () => {
+    if (!parts.length || writing) return;
+    if (!confirm('마지막 장을 지우고 다시 쓸까요?')) return;
+    const last = parts[parts.length - 1];
+    const next = parts.slice(0, -1);
+    setParts(next);
+    setInput(last.user);
+    await persist(next);
+  };
+
+  const finish = async () => {
+    if (!done || finishing) return;
+    setFinishing(true);
+    await persist(parts, { title: title.trim().slice(0, 70) || seed?.title });
+    router.push(`/book?story=${storyId}`);
+  };
+
+  if (loadError) {
+    return (
+      <div className="night-page"><SiteHeader />
+        <main className="container"><div className="empty card-night" style={{ marginTop: 50 }}><div className="big">🌙</div><h1 className="title-2">{loadError}</h1><Link href="/library" className="btn btn-gold">내 서재로 가기</Link></div></main>
+      </div>
+    );
+  }
+  if (!seed) {
+    return <div className="night-page"><SiteHeader /><div className="loading-screen"><div><div className="moon-loader" />작업실을 여는 중이에요…</div></div></div>;
+  }
+
+  const hint = isLast
+    ? '이야기를 어떻게 끝내고 싶나요? 주인공이 마지막에 하는 말도 들려주세요.'
+    : current === 0
+      ? seed.firstPrompt
+      : '아이의 말을 그대로 적거나, 마이크를 눌러 함께 말해 보세요. 한두 문장이면 충분해요.';
+  const question = IDEAS[(Math.max(0, idea) + current) % IDEAS.length];
+
+  return (
+    <div className="night-page">
+      <SiteHeader authUser={user} />
+      <main className="container studio">
+        <div className="studio-top">
+          <div>
+            <span className="eyebrow"><Icon name="pen" size={14} /> 우리 이야기 작업실</span>
+            <h1 className="title-2" style={{ marginTop: 6 }}>한 장씩, 아이의 상상을 이어가요</h1>
+          </div>
+          <Link href="/library" className="btn btn-ghost btn-sm">잠시 나가기</Link>
         </div>
-      </section>
+
+        <div className="studio-layout">
+          <aside className="studio-side">
+            <div className="studio-seed card-night">
+              <span className="seed-theme">이야기의 시작 · {seed.theme}</span>
+              <h2>{seed.emoji} {seed.title}</h2>
+              <p>{seed.preview}</p>
+            </div>
+            <div className="studio-progress card-paper">
+              <div className="progress-label"><span>우리가 만든 장</span><strong>{current} / {total}장</strong></div>
+              <div className="progress-bar" role="progressbar" aria-valuenow={current} aria-valuemin={0} aria-valuemax={total} aria-label="동화 작성 진행"><span style={{ width: `${(current / total) * 100}%` }} /></div>
+              <div className="progress-stars" aria-hidden="true">{Array.from({ length: total }, (_, i) => <i key={i} className={i < current ? 'done' : ''}>{i < current ? '★' : i + 1}</i>)}</div>
+              <p className="studio-tip">쓴 내용은 자동으로 저장돼요. 나갔다가 서재에서 이어서 만들 수 있어요.</p>
+            </div>
+          </aside>
+
+          <section className="studio-main" aria-label="동화 작성">
+            {parts.map((p, i) => (
+              <article className="entry card-paper" key={i}>
+                <div className="entry-head">
+                  <strong>{i + 1}번째 장</strong>
+                  {editing !== i && <button onClick={() => { setEditing(i); setEditText(p.ai); }} disabled={writing || editing !== null}><Icon name="pen" size={13} /> 고치기</button>}
+                </div>
+                {editing === i ? (
+                  <>
+                    <textarea className="field" value={editText} onChange={e => setEditText(e.target.value)} maxLength={1200} aria-label={`${i + 1}장 문장 고치기`} />
+                    <div className="edit-row">
+                      <button className="btn btn-ink btn-sm" onClick={saveEdit} disabled={!editText.trim()}>고친 문장 저장</button>
+                      <button className="btn btn-paper btn-sm" onClick={() => setEditing(null)}>취소</button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="entry-text">{p.ai}</p>
+                )}
+                <details><summary>아이가 처음 들려준 말</summary><p>{p.user}</p></details>
+              </article>
+            ))}
+
+            <div ref={composerRef}>
+              {done ? (
+                <div className="finish-card card-paper on-paper">
+                  <span className="eyebrow"><Icon name="check" size={15} /> {total}장 이야기 완성</span>
+                  <h2 className="title-2">이제 우리 책에 이름을 붙여요</h2>
+                  <p className="muted">문장을 한 번 더 읽어 보고, 마음에 드는 제목을 지어 주세요. 다음 화면에서 그림이 그려져요.</p>
+                  <label htmlFor="book-title">우리 그림책 제목</label>
+                  <input id="book-title" className="field" value={title} maxLength={70} onChange={e => setTitle(e.target.value)} />
+                  <button className="btn btn-gold btn-lg btn-block" style={{ marginTop: 18 }} onClick={finish} disabled={finishing || editing !== null || !title.trim()}>
+                    {finishing ? <><span className="spin" /> 그림책을 펼치는 중…</> : <><Icon name="brush" /> 그림 그리고 책으로 만들기</>}
+                  </button>
+                  <button className="text-btn" style={{ color: 'var(--ink-3)', marginTop: 10 }} onClick={undoLast}>마지막 장 다시 쓰기</button>
+                </div>
+              ) : (
+                <div className="composer card-paper">
+                  <span className="composer-step"><Icon name="pen" size={14} /> {current + 1}번째 장 {isLast && '· 마지막 장'}</span>
+                  <h2>{isLast ? '어떤 마지막 장면을 남길까요?' : current ? '그다음엔 무슨 일이 있었나요?' : '첫 번째 상상을 들려주세요'}</h2>
+                  <p className="hint">{hint}</p>
+                  <textarea
+                    className="field"
+                    aria-label="아이가 이어서 만든 이야기"
+                    placeholder={recording ? '듣고 있어요. 천천히 말해 주세요…' : isLast ? '그래서 마지막에는…' : '그리고 주인공은…'}
+                    value={live ? `${input} ${live}`.trim() : input}
+                    onChange={e => setInput(e.target.value)}
+                    maxLength={1500}
+                    disabled={writing || recording}
+                  />
+                  <div className="composer-tools">
+                    <button className={`mic-btn ${recording ? 'on' : ''}`} onClick={toggleMic} disabled={writing} aria-pressed={recording}>
+                      <span className="mic-dot"><Icon name="mic" size={16} /></span>
+                      {recording ? '다 말했어요' : '말로 들려주기'}
+                    </button>
+                    <span className="char-count">{input.length} / 1500</span>
+                  </div>
+                  {error && <div className="notice on-paper" role="alert" style={{ marginBottom: 12 }}>{error}</div>}
+                  <button className="btn btn-gold btn-lg btn-block" onClick={write} disabled={!input.trim() || writing || recording || editing !== null}>
+                    {writing ? <><span className="spin" /> 요정들이 문장을 다듬고 있어요…</> : <><Icon name="sparkles" /> 이 말로 {current + 1}번째 장 만들기</>}
+                  </button>
+                  <button className="idea-btn" onClick={() => setIdea(i => i + 1)}><Icon name="sparkles" size={15} /> {idea < 0 ? '생각이 막혔나요? 질문 하나 보기' : '다른 질문 보기'}</button>
+                  {idea >= 0 && <p className="idea-text" aria-live="polite">{question}</p>}
+                  {current > 0 && <button className="text-btn" style={{ color: 'var(--ink-3)', display: 'block', marginTop: 8 }} onClick={undoLast} disabled={writing}>방금 쓴 장 다시 쓰기</button>}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      </main>
     </div>
-  </main></>;
+  );
 }
-export default function CreatePage() { return <Suspense fallback={<p className="studio" role="status">작업실을 열고 있어요…</p>}><CreateContent/></Suspense>; }
+
+export default function CreatePage() {
+  return (
+    <Suspense fallback={<div className="night-page"><div className="loading-screen"><div><div className="moon-loader" />작업실을 여는 중이에요…</div></div></div>}>
+      <Studio />
+    </Suspense>
+  );
+}

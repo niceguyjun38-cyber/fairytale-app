@@ -1,95 +1,182 @@
-'use client';
-import { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { SEED_STORIES, PAGE_OPTIONS, SeedStory } from '@/data/seedStories';
-import { useAuth } from '@/lib/useAuth';
 import { SiteHeader } from '@/components/SiteHeader';
-import { Icon } from '@/components/Icon';
+import { SiteFooter } from '@/components/SiteFooter';
+import { PopularShelf } from '@/components/PopularShelf';
+import { Icon, type IconName } from '@/components/Icon';
+import { PLANS } from '@/data/seedStories';
 
-const PAGE_COST: Record<number, number> = { 8: 1, 12: 1.5, 15: 2 };
-const ART: Record<number, string> = { 1: '/illustrations/forest-bear.png', 2: '/illustrations/fallen-star.png', 3: '/illustrations/magic-bakery.png' };
+const STEPS: { icon: IconName; title: string; desc: string }[] = [
+  { icon: 'book', title: '이야기의 문 고르기', desc: '숲속 곰, 떨어진 별, 마법 빵집… 여섯 가지 시작 중 하나를 골라요.' },
+  { icon: 'mic', title: '아이가 말로 이어가기', desc: '글씨를 몰라도 괜찮아요. 마이크에 대고 "그다음엔…" 하고 말하면 돼요.' },
+  { icon: 'brush', title: '그림책으로 완성', desc: '아이의 말은 동화 문장이 되고, 장면마다 그림이 그려져요.' },
+  { icon: 'sound', title: '잠들기 전 읽어주기', desc: '페이지가 저절로 넘어가며 다정한 목소리로 끝까지 읽어줘요.' },
+];
 
-export default function Home() {
-  const router = useRouter();
-  const { user, loading: authLoading, signInWithKakao } = useAuth();
-  const [selected, setSelected] = useState<SeedStory>(SEED_STORIES[0]);
-  const [pageCount, setPageCount] = useState(8);
-  const [userPlan, setUserPlan] = useState('guest');
-  const [credits, setCredits] = useState(0);
-  const [starting, setStarting] = useState(false);
-  const [creditLoading, setCreditLoading] = useState(false);
-  const [error, setError] = useState('');
-  const startRef = useRef(false);
+const FEATURES: { icon: IconName; title: string; desc: string }[] = [
+  { icon: 'pen', title: '아이의 말을 그대로 존중해요', desc: 'AI가 이야기를 대신 쓰지 않아요. 아이가 말한 인물과 사건을 살려 문장만 다듬고, 부모님이 직접 고칠 수도 있어요.' },
+  { icon: 'sound', title: '네 가지 목소리 낭독', desc: '달님 할아버지, 다정한 엄마, 별빛 언니, 꼬마 친구. 한 번 만든 목소리는 몇 번을 들어도 무료예요.' },
+  { icon: 'words', title: '내 동화로 배우는 영어', desc: '완성한 동화 속 단어 5개를 영어로 만나요. 내가 만든 이야기라 훨씬 오래 기억해요.' },
+  { icon: 'library', title: '평생 남는 우리 서재', desc: '만든 그림책은 서재에 차곡차곡 쌓여요. 할머니, 할아버지께 링크로 보내 드릴 수도 있어요.' },
+  { icon: 'heart', title: '친구들과 나누는 책장', desc: '원하는 이야기만 공개하면 다른 꼬마작가들이 읽고 마음을 남겨요.' },
+  { icon: 'gift', title: '진짜 종이책이 될지도', desc: '한 해 동안 가장 사랑받은 이야기는 실물 그림책으로 만들어 집으로 보내드려요.' },
+];
 
-  useEffect(() => {
-    if (!user) { setUserPlan('guest'); setCredits(0); return; }
-    let alive = true;
-    setCreditLoading(true);
-    fetch('/api/credits').then(async r => { const d = await r.json(); if (!r.ok || d.error) throw new Error(); return d; })
-      .then(d => { if (alive) { setUserPlan(d.plan || 'free'); setCredits(Number(d.credits) || 0); } })
-      .catch(() => { if (alive) setError('별가루 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'); })
-      .finally(() => { if (alive) setCreditLoading(false); });
-    return () => { alive = false; };
-  }, [user]);
+const FAQ = [
+  ['몇 살부터 쓸 수 있나요?', '말로 이야기를 이어갈 수 있다면 4살 무렵부터 충분히 즐길 수 있어요. 7~9살은 직접 글로 쓰면서 더 길게 만들기도 해요. 처음에는 부모님이 옆에서 질문을 건네 주시면 훨씬 풍성해져요.'],
+  ['아이가 엉뚱한 말을 해도 괜찮나요?', '그럼요. "곰이 하늘을 날아서 달에 사는 토끼를 만났어"처럼 엉뚱한 상상일수록 더 멋진 동화가 돼요. 무섭거나 폭력적인 내용은 부드러운 표현으로 다듬어져요.'],
+  ['한 권 만드는 데 얼마나 걸리나요?', '8장 동화 기준 15분 남짓이에요. 이야기를 다 만들면 그림은 몇 분 안에 자동으로 완성돼요.'],
+  ['별가루가 뭔가요?', '동화를 만들 때 쓰는 이용권이에요. 8장 동화는 1개, 12장은 1.5개, 15장은 2개가 필요해요. 가입하면 2개를 선물로 드려요.'],
+  ['자동으로 결제되나요?', '아니요. 이용권은 30일 단위 한 번 결제예요. 자동 연장되지 않으니 필요할 때만 다시 구매하시면 돼요.'],
+  ['만든 동화는 다른 사람이 볼 수 있나요?', '기본은 나만 보기로 저장돼요. 공개를 켠 이야기만 친구들 책장에 올라가고, 언제든 다시 비공개로 바꿀 수 있어요.'],
+];
 
-  const handleStart = async () => {
-    if (startRef.current || authLoading || creditLoading) return;
-    setError('');
-    if (!user) {
-      try { await signInWithKakao(); } catch { setError('로그인에 연결하지 못했어요. 다시 시도해 주세요.'); }
-      return;
-    }
-    startRef.current = true;
-    setStarting(true);
-    try {
-      const res = await fetch('/api/credits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pages: pageCount }) });
-      const data = await res.json();
-      if (res.status === 402) { setError(`별가루가 부족해요. 필요한 별가루 ${data.needed}개, 남은 별가루 ${data.credits}개`); return; }
-      if (!res.ok || data.error) throw new Error(data.error || '이야기를 시작하지 못했어요.');
-      setCredits(Number(data.credits));
-      router.push(`/create?seed=${selected.id}&pages=${pageCount}`);
-    } catch (e) { setError(e instanceof Error ? e.message : '잠시 후 다시 시도해 주세요.'); }
-    finally { setStarting(false); startRef.current = false; }
-  };
-
-  return <div className="workshop-home"><SiteHeader/>
-    <main className="workshop-container">
-      <div className="workshop-heading">
-        <div><p className="eyebrow"><Icon name="sparkles" size={16}/> 달빛 아래, 이야기가 깨어나는 곳</p><h1>어떤 이야기의 문을<br className="mobile-break"/> 열어볼까요?</h1><p className="lead">마음에 드는 시작을 고르면, 다음 이야기는 우리 아이의 차례예요.</p></div>
-        <div className="credit-note"><Icon name="sparkles" size={21}/><div>{user ? <><strong>{creditLoading ? '확인 중…' : `별가루 ${credits}개`}</strong><Link href="/plans">내 플랜 보기</Link></> : <><strong>첫 동화를 선물해요</strong><span>가입하면 별가루 2개</span></>}</div></div>
-      </div>
-      <div className="workshop-grid">
-        <section className="seed-selection" aria-labelledby="seed-heading">
-          <div className="section-caption"><h2 id="seed-heading"><span className="step-number">01</span> 이야기의 시작 고르기</h2><span>{SEED_STORIES.length}가지 시작</span></div>
-          <div className="featured-seeds">
-            {SEED_STORIES.slice(0, 3).map((s, i) => <button key={s.id} className={`seed-cover ${selected.id === s.id ? 'is-selected' : ''}`} onClick={() => setSelected(s)} aria-pressed={selected.id === s.id}>
-              <div className="seed-cover-art"><img src={ART[s.id]} alt="" width="768" height="512" loading={i ? 'lazy' : 'eager'}/><span className="seed-check"><Icon name="check" size={16}/></span></div>
-              <div className="seed-cover-copy"><span className="seed-category">{s.theme.replace('/', ' · ')}</span><h3>{s.title}</h3><p>{s.description}</p></div>
-            </button>)}
+export default function Landing() {
+  return (
+    <div className="night-page">
+      <SiteHeader />
+      <main>
+        <section className="hero">
+          <div className="hero-stars" aria-hidden="true">
+            <span style={{ top: '14%', left: '12%', fontSize: 14 }}>✦</span>
+            <span style={{ top: '22%', left: '84%', fontSize: 18, animationDelay: '1s' }}>✦</span>
+            <span style={{ top: '62%', left: '7%', fontSize: 11, animationDelay: '1.8s' }}>✧</span>
+            <span style={{ top: '70%', left: '90%', fontSize: 12, animationDelay: '0.6s' }}>✧</span>
+            <span style={{ top: '38%', left: '22%', fontSize: 9, animationDelay: '2.4s' }}>⋆</span>
           </div>
-          <p className="more-seeds-label">다른 상상도 기다리고 있어요</p>
-          <div className="compact-seeds">
-            {SEED_STORIES.slice(3).map(s => <button key={s.id} className={`seed-row ${selected.id === s.id ? 'is-selected' : ''}`} onClick={() => setSelected(s)} aria-pressed={selected.id === s.id}><span className="seed-symbol" aria-hidden="true">{s.emoji}</span><span><strong>{s.title}</strong><small>{s.description}</small></span><span className="seed-row-check">{selected.id === s.id ? <Icon name="check" size={18}/> : <Icon name="arrow" size={17}/>}</span></button>)}
-          </div>
-          <div className="process-strip" aria-label="동화 제작 과정"><span><Icon name="mic"/> 상상을 말하고</span><span><Icon name="pen"/> 문장을 다듬고</span><span><Icon name="book"/> 우리 책으로 간직해요</span></div>
-        </section>
-        <aside className="story-setup" aria-label="선택한 이야기와 분량">
-          <div className="story-setup-top"><span className="eyebrow">우리 이야기의 첫 문장</span><span className="setup-symbol" aria-hidden="true">{selected.emoji}</span><h2>{selected.title}</h2><p className="seed-preview" key={selected.id}>{selected.preview}</p><div className="continuation"><Icon name="pen" size={17}/><span>그다음엔 어떤 일이 일어날까요?</span></div></div>
-          <div className="story-setup-bottom">
-            <h3><span className="step-number">02</span> 이야기 길이 고르기</h3>
-            <div className="page-options" role="group" aria-label="동화 분량">
-              {PAGE_OPTIONS.map(opt => { const locked = (opt.minPlan === 'moon' && !['moon', 'star'].includes(userPlan)) || (opt.minPlan === 'star' && userPlan !== 'star'); return <button key={opt.count} className={`page-option ${pageCount === opt.count ? 'is-selected' : ''}`} aria-pressed={pageCount === opt.count} onClick={() => { if (locked) { router.push('/plans'); return; } setPageCount(opt.count); }} aria-label={`${opt.count}장 ${locked ? (opt.minPlan === 'star' ? '별빛' : '달빛') + ' 플랜 필요' : opt.label}`}><strong>{opt.count}<small>장</small></strong><span>{locked ? <><Icon name="lock" size={12}/>{opt.minPlan === 'star' ? '별빛' : '달빛'}</> : opt.label}</span></button>; })}
+          <div className="container fade-up">
+            <span className="eyebrow"><Icon name="moon" size={15} /> 달빛 아래, 이야기가 깨어나는 곳</span>
+            <h1 className="display">우리 아이가<br />오늘 밤의 작가예요</h1>
+            <p className="lead">
+              아이가 말하면 이야기가 되고, 이야기는 그림책이 돼요.<br />
+              세상에 단 한 권뿐인 우리 아이의 동화를 만들어 보세요.
+            </p>
+            <div className="hero-actions">
+              <Link href="/start" className="btn btn-gold btn-lg"><Icon name="sparkles" /> 첫 동화 무료로 만들기</Link>
+              <Link href="/feed" className="btn btn-ghost btn-lg">친구들 이야기 구경하기</Link>
             </div>
-            <p className="page-note">시작 이야기와 표지는 별도로 더해져요.</p>
-            <div className="cost-line"><span>사용할 별가루</span><strong><Icon name="sparkles" size={15}/>{PAGE_COST[pageCount]}개</strong></div>
-            {error && <div className="inline-error" role="alert">{error} <Link href="/plans">플랜 확인</Link></div>}
-            <button className="button-primary start-story" onClick={handleStart} disabled={starting || authLoading || creditLoading}>{starting ? '이야기를 준비하고 있어요…' : user ? '우리 동화 시작하기' : '로그인하고 동화 시작하기'}<Icon name="arrow"/></button>
-            <p className="setup-footnote">말하기와 글쓰기, 편한 방법으로 함께해요.</p>
+            <p className="hero-note">카카오로 3초 가입 · 가입하면 그림책 2권을 만들 수 있는 별가루를 드려요</p>
           </div>
-        </aside>
-      </div>
-      <footer className="workshop-footer"><span>꼬마작가 동화공방</span><p>오늘 나눈 상상이, 오래 꺼내 읽을 이야기가 되도록.</p><Link href="/feed">친구들 이야기 둘러보기 <Icon name="arrow" size={16}/></Link></footer>
-    </main>
-  </div>;
+        </section>
+
+        <section className="section" style={{ paddingTop: 20 }}>
+          <div className="container">
+            <div className="section-head">
+              <span className="eyebrow">✦ 이렇게 만들어져요</span>
+              <h2 className="title-1">말 한마디가 한 장이 되고,<br />한 장이 한 권이 돼요</h2>
+            </div>
+            <div className="steps">
+              {STEPS.map((s, i) => (
+                <div className="step card-night" key={s.title}>
+                  <span className="step-num">{String(i + 1).padStart(2, '0')}</span>
+                  <div className="step-icon"><Icon name={s.icon} size={24} /></div>
+                  <h3 className="title-3">{s.title}</h3>
+                  <p>{s.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="section">
+          <div className="container">
+            <div className="section-head">
+              <span className="eyebrow">✦ 미리 보기</span>
+              <h2 className="title-1">아이의 말이 이렇게 바뀌어요</h2>
+            </div>
+            <div className="sample card-paper">
+              <div className="sample-art">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/illustrations/forest-bear.webp" alt="파란 목도리를 한 아기 곰이 반딧불이 가득한 숲길을 걷는 그림" loading="lazy" />
+              </div>
+              <div className="sample-page">
+                <span className="tag">3번째 장 · 숲속의 작은 곰</span>
+                <div className="sample-said"><b>아이가 한 말</b><br />&ldquo;곰이 반딧불이 따라가서 길을 잃었는데 반딧불이가 집에 데려다줬어&rdquo;</div>
+                <p className="sample-text">작은 곰은 반짝이는 반딧불이를 따라 숲속 깊이 걸어갔어요. 정신을 차려 보니 처음 보는 길이었지요. 그때 반딧불이들이 동그랗게 모여 &ldquo;우리가 집까지 데려다줄게!&rdquo; 하고 길을 밝혀 주었어요.</p>
+                <div className="sample-tools">
+                  <span className="chip"><Icon name="sound" size={14} /> 목소리로 듣기</span>
+                  <span className="chip"><Icon name="words" size={14} /> firefly · forest · home</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="section">
+          <div className="container">
+            <div className="section-head">
+              <span className="eyebrow">✦ 동화공방이 특별한 이유</span>
+              <h2 className="title-1">AI가 쓰는 동화가 아니라,<br />아이가 쓰는 동화예요</h2>
+            </div>
+            <div className="features">
+              {FEATURES.map(f => (
+                <div className="feature card-night" key={f.title}>
+                  <div className="step-icon"><Icon name={f.icon} size={22} /></div>
+                  <h3 className="title-3">{f.title}</h3>
+                  <p>{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <PopularShelf />
+
+        <section className="section" id="pricing">
+          <div className="container">
+            <div className="section-head">
+              <span className="eyebrow">✦ 이용권</span>
+              <h2 className="title-1">커피 한 잔 값으로<br />한 달 내내 그림책을</h2>
+              <p className="lead">자동결제 없이 30일 단위로 구매해요. 남은 별가루는 사라지지 않아요.</p>
+            </div>
+            <div className="pricing">
+              <div className="price-card card-night">
+                <div className="price-name"><span aria-hidden="true">🌱</span><h3 className="title-3">처음 만나는 공방</h3></div>
+                <p className="price">무료</p>
+                <ul className="price-list">
+                  <li><Icon name="check" size={16} />가입하면 별가루 2개</li>
+                  <li><Icon name="check" size={16} />8장 그림책 2권</li>
+                  <li><Icon name="check" size={16} />목소리 낭독 · 영어 단어</li>
+                </ul>
+                <Link href="/start" className="btn btn-ghost btn-block">무료로 시작하기</Link>
+              </div>
+              {PLANS.map(p => (
+                <div key={p.id} className={`price-card card-night ${p.highlight ? 'featured' : ''}`}>
+                  {p.highlight && <span className="price-badge">가장 많이 골라요</span>}
+                  <div className="price-name"><span aria-hidden="true">{p.id === 'star' ? '⭐' : '🌙'}</span><h3 className="title-3">{p.name} 30일</h3></div>
+                  <p className="price">{p.price.toLocaleString()}<small>원</small></p>
+                  <ul className="price-list">{p.features.map(f => <li key={f}><Icon name="check" size={16} />{f}</li>)}</ul>
+                  <Link href="/plans" className={`btn btn-block ${p.highlight ? 'btn-gold' : 'btn-ghost'}`}>{p.name} 이용권 보기</Link>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="section">
+          <div className="container-narrow">
+            <div className="section-head">
+              <span className="eyebrow">✦ 자주 묻는 질문</span>
+              <h2 className="title-1">궁금한 점이 있나요?</h2>
+            </div>
+            <div className="faq">
+              {FAQ.map(([q, a]) => (
+                <details key={q} className="card-night"><summary>{q}</summary><p>{a}</p></details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="section" style={{ paddingTop: 10 }}>
+          <div className="container-narrow">
+            <div className="cta-band card-night">
+              <span className="eyebrow"><Icon name="moon" size={15} /> 오늘 밤의 이야기</span>
+              <h2 className="title-1">아이의 상상이 사라지기 전에<br />한 권의 책으로 남겨 주세요</h2>
+              <Link href="/start" className="btn btn-gold btn-lg"><Icon name="sparkles" /> 지금 첫 동화 만들기</Link>
+            </div>
+          </div>
+        </section>
+      </main>
+      <SiteFooter />
+    </div>
+  );
 }

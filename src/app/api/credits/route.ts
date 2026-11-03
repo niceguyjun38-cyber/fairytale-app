@@ -1,120 +1,47 @@
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSupabase } from '@/lib/supabaseServer';
 
-const PLAN_CREDITS: Record<string, number> = { free: 2, moon: 8, star: 18 };
-const PAGE_COST: Record<number, number> = { 8: 1, 12: 1.5, 15: 2 };
+const ERRORS: Record<string, [number, string]> = {
+  NOT_LOGGED_IN: [401, '로그인이 필요해요.'],
+  NOT_ENOUGH: [402, '별가루가 부족해요.'],
+  PLAN_REQUIRED: [403, '이 길이는 구독 플랜에서 만들 수 있어요.'],
+  BAD_PAGES: [400, '동화 길이를 다시 골라 주세요.'],
+};
 
-async function getSupabase() {
-  const cookieStore = await cookies();
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
+function mapError(message: string) {
+  const key = Object.keys(ERRORS).find(k => message.includes(k));
+  return key ? { code: key, status: ERRORS[key][0], text: ERRORS[key][1] } : { code: 'UNKNOWN', status: 500, text: '잠시 후 다시 시도해 주세요.' };
 }
 
-// 월이 바뀌었으면 크레딧 리셋 (유료 플랜만)
-function needsReset(plan: string, resetAt: string): boolean {
-  if (plan === 'free') return false;
-  const last = new Date(resetAt);
-  const now = new Date();
-  return (
-    last.getFullYear() !== now.getFullYear() || last.getMonth() !== now.getMonth()
-  );
-}
-
-// GET: 내 플랜/크레딧 조회
+// 내 플랜과 별가루
 export async function GET() {
-  try {
-    const supabase = await getSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ plan: 'guest', credits: 0 });
-    }
+  const supabase = await getServerSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ plan: 'guest', credits: 0, planExpiresAt: null });
 
-    let { data: profile } = await supabase
-      .from('profiles')
-      .select('plan, credits, credits_reset_at')
-      .eq('id', user.id)
-      .single();
-
-    // 프로필이 없으면 생성
-    if (!profile) {
-      const { data: created } = await supabase
-        .from('profiles')
-        .insert({ id: user.id, plan: 'free', credits: 2 })
-        .select('plan, credits, credits_reset_at')
-        .single();
-      profile = created;
-    }
-
-    if (!profile) {
-      return NextResponse.json({ plan: 'free', credits: 0 });
-    }
-
-    // 월간 리셋
-    if (needsReset(profile.plan, profile.credits_reset_at)) {
-      const fresh = PLAN_CREDITS[profile.plan] ?? 0;
-      await supabase
-        .from('profiles')
-        .update({ credits: fresh, credits_reset_at: new Date().toISOString() })
-        .eq('id', user.id);
-      return NextResponse.json({ plan: profile.plan, credits: fresh });
-    }
-
-    return NextResponse.json({ plan: profile.plan, credits: Number(profile.credits) });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  const { data, error } = await supabase.rpc('get_my_wallet');
+  if (error || !data?.[0]) {
+    console.error('get_my_wallet', error?.message);
+    return NextResponse.json({ error: '별가루 정보를 불러오지 못했어요.' }, { status: 500 });
   }
+  const w = data[0];
+  return NextResponse.json({ plan: w.plan, credits: Number(w.credits), planExpiresAt: w.plan_expires_at });
 }
 
-// POST: 크레딧 차감 (동화 만들기 시작할 때)
+// 동화 시작: 별가루 차감 + 초안 생성
 export async function POST(req: NextRequest) {
-  try {
-    const { pages } = await req.json();
-    const cost = PAGE_COST[pages] ?? 1;
-
-    const supabase = await getSupabase();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json({ error: '로그인이 필요해요' }, { status: 401 });
-    }
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('plan, credits')
-      .eq('id', user.id)
-      .single();
-
-    if (!profile) {
-      return NextResponse.json({ error: '프로필을 찾을 수 없어요' }, { status: 404 });
-    }
-
-    const current = Number(profile.credits);
-    if (current < cost) {
-      return NextResponse.json(
-        { error: 'NOT_ENOUGH', credits: current, needed: cost },
-        { status: 402 }
-      );
-    }
-
-    const remaining = current - cost;
-    await supabase.from('profiles').update({ credits: remaining }).eq('id', user.id);
-
-    return NextResponse.json({ success: true, credits: remaining, used: cost });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  const body = await req.json().catch(() => ({}));
+  const pages = Number(body.pages);
+  const seed = Number(body.seed);
+  if (![8, 12, 15].includes(pages) || !(seed >= 1 && seed <= 6)) {
+    return NextResponse.json({ error: '동화 길이를 다시 골라 주세요.', code: 'BAD_PAGES' }, { status: 400 });
   }
+  const supabase = await getServerSupabase();
+  const { data, error } = await supabase.rpc('start_story', { p_seed: seed, p_pages: pages });
+  if (error || !data?.[0]) {
+    const m = mapError(error?.message || '');
+    if (m.code === 'UNKNOWN') console.error('start_story', error?.message);
+    return NextResponse.json({ error: m.text, code: m.code }, { status: m.status });
+  }
+  return NextResponse.json({ storyId: data[0].story_id, credits: Number(data[0].credits) });
 }
