@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.message || '결제를 승인하지 못했어요.' }, { status: 400 });
     }
 
-    // 결제됨 표시 + 이용권·별가루 지급을 DB에서 한 번에 처리해요 (supabase/2026-11-17-payment-grant.sql)
+    // 결제됨 표시 + 이용권·별가루 지급을 DB에서 한 번에 처리해요 (supabase/2026-11-17-payments.sql)
     const { data: granted, error: grantError } = await admin.rpc('grant_paid_order', { p_order: orderId, p_payment_key: paymentKey });
     if (!grantError && granted?.[0]) {
       const g = granted[0];

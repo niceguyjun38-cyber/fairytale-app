@@ -644,3 +644,20 @@ textarea.field { min-height: 130px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ── 계좌이체 입금 안내 ───────────────────────────────── */
+.bank-box { max-width: 640px; margin: 0 auto 30px; padding: 22px 24px; color: var(--ink); }
+.bank-box .title-3 { margin-bottom: 12px; }
+.bank-order + .bank-order { margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--paper-line); }
+.bank-amount { font-size: 1rem; margin-bottom: 8px; }
+.bank-order dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 0.92rem; }
+.bank-order dt { color: var(--ink-3); }
+.bank-order dd .text-btn { margin-left: 6px; font-size: 0.82rem; text-decoration: underline; color: #8a6224; }
+.bank-note { font-size: 0.84rem; margin-top: 10px; }
+.bank-cancel { margin-top: 6px; font-size: 0.82rem; color: var(--ink-3); text-decoration: underline; }
+.bank-label { display: block; font-size: 0.86rem; font-weight: 700; color: var(--ink-2); margin: 16px 0 8px; }
+.admin-list { display: flex; flex-direction: column; gap: 10px; }
+.admin-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 16px 18px; color: var(--ink); }
+.admin-row small { display: block; margin-top: 4px; font-size: 0.78rem; color: var(--ink-3); line-height: 1.6; word-break: break-all; }
+.admin-actions { display: flex; gap: 6px; flex-shrink: 0; }
+@media (max-width: 600px) { .admin-row { flex-direction: column; align-items: stretch; } }

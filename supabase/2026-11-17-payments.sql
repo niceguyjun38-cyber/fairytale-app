@@ -1,5 +1,7 @@
 -- ════════════════════════════════════════════════════════════════
--- 꼬마작가 동화공방 · 결제 지급을 한 번에 처리하는 함수 (2026-11-17)
+-- 꼬마작가 동화공방 · 결제 정리 (2026-11-17)
+--   1) 계좌이체(무통장입금) 주문을 위한 칸
+--   2) 결제 확인과 별가루 지급을 한 번에 처리하는 함수
 -- Supabase → SQL Editor → New query → 전체 붙여넣기 → Run
 -- launch.sql 을 이미 실행한 뒤에 실행하세요. 여러 번 실행해도 안전해요.
 --
@@ -10,6 +12,12 @@
 --   (함수를 아직 안 만들었어도 서버는 예전 방식으로 동작하니 결제가 멈추지는 않아요.)
 -- ════════════════════════════════════════════════════════════════
 
+-- ── 1. 계좌이체 주문 칸 ─────────────────────────────────────────
+alter table orders add column if not exists method text not null default 'card';   -- card | bank
+alter table orders add column if not exists depositor text;                        -- 입금자명
+create index if not exists orders_status_idx on orders (status, created_at desc);
+
+-- ── 2. 결제 지급 함수 ───────────────────────────────────────────
 create or replace function grant_paid_order(p_order text, p_payment_key text)
 returns table (plan text, credits numeric, plan_expires_at timestamptz, already boolean)
 language plpgsql security definer set search_path = public as $$
