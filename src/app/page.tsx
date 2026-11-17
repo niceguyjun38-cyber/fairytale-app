@@ -141,7 +141,7 @@ export default function Landing() {
               </div>
               {PLANS.map(p => (
                 <div key={p.id} className={`price-card card-night ${p.highlight ? 'featured' : ''}`}>
-                  {p.highlight && <span className="price-badge">가장 많이 골라요</span>}
+                  {p.highlight && <span className="price-badge">한 권에 550원꼴</span>}
                   <div className="price-name"><span aria-hidden="true">{p.id === 'star' ? '⭐' : '🌙'}</span><h3 className="title-3">{p.name} 30일</h3></div>
                   <p className="price">{p.price.toLocaleString()}<small>원</small></p>
                   <ul className="price-list">{p.features.map(f => <li key={f}><Icon name="check" size={16} />{f}</li>)}</ul>

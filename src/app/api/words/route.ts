@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { consumeUsage, getServerSupabase } from '@/lib/supabaseServer';
+import { consumeUsage, getServerSupabase, loadStoryTexts } from '@/lib/supabaseServer';
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    const { storyText, storyId } = await req.json();
-    if (typeof storyText !== 'string' || !storyText.trim() || storyText.length > 40000) {
-      return NextResponse.json({ error: '단어를 고를 동화 내용을 확인해 주세요.' }, { status: 400 });
-    }
+    const { storyId } = await req.json();
     const supabase = await getServerSupabase();
+    // 단어는 화면이 보낸 글이 아니라 DB에 저장된 동화 본문(표지 제외)에서 골라요
+    const texts = await loadStoryTexts(supabase, storyId);
+    const storyText = texts?.slice(1).join(' ').trim().slice(0, 40000) ?? '';
+    if (!storyText) {
+      return NextResponse.json({ error: '단어를 고를 동화를 찾지 못했어요.' }, { status: 404 });
+    }
     if (!(await consumeUsage(supabase, storyId, 'word'))) {
       return NextResponse.json({ error: '지금은 단어를 고를 수 없어요. 잠시 후 다시 시도해 주세요.' }, { status: 429 });
     }

@@ -108,7 +108,7 @@ export function StoryReader({ title, emoji, storyId, pages, closeHref, closeLabe
       p = fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storyId, pageIndex: i, text: page.text, voice: v }),
+        body: JSON.stringify({ storyId, pageIndex: i, voice: v }),
       })
         .then(async r => {
           const d = await r.json().catch(() => ({}));
@@ -331,7 +331,7 @@ function WordSheet({ storyId, text, onClose }: { storyId: string; text: string; 
   const [playing, setPlaying] = useState<number | null>(null);
 
   const fetchWords = useCallback(() => {
-    fetch('/api/words', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ storyText: text, storyId }) })
+    fetch('/api/words', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ storyId }) })
       .then(async r => {
         const d = await r.json();
         if (!r.ok || !Array.isArray(d.words)) throw new Error(d.error);

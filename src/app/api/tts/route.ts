@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { consumeUsage, getAdminSupabase, getServerSupabase } from '@/lib/supabaseServer';
+import { consumeUsage, getAdminSupabase, getServerSupabase, loadStoryTexts } from '@/lib/supabaseServer';
 
 export const maxDuration = 60;
 
@@ -35,7 +35,7 @@ async function exists(url: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { storyId, pageIndex, text, voice, preview } = await req.json();
+    const { storyId, pageIndex, voice, preview } = await req.json();
     const v = VOICE[voice as string];
     if (!v) return NextResponse.json({ error: '목소리를 다시 골라 주세요.' }, { status: 400 });
 
@@ -49,12 +49,14 @@ export async function POST(req: NextRequest) {
       input = PREVIEW;
       path = `previews/${voice}-v2.mp3`;
     } else {
-      if (typeof text !== 'string' || !text.trim() || text.length > 800) {
-        return NextResponse.json({ error: '읽을 문장을 확인해 주세요.' }, { status: 400 });
-      }
-      input = text.trim();
+      // 읽을 문장은 화면이 보낸 글이 아니라 DB에 저장된 그 장의 문장을 써요
+      const index = Number(pageIndex);
+      const texts = Number.isInteger(index) && index >= 0 ? await loadStoryTexts(supabase, storyId) : null;
+      const text = texts?.[index]?.trim();
+      if (!text) return NextResponse.json({ error: '읽을 문장을 찾지 못했어요.' }, { status: 404 });
+      input = text.slice(0, 2000);
       const hash = createHash('sha1').update(input).digest('hex').slice(0, 10);
-      path = `${storyId}/v2-p${Number(pageIndex) || 0}-${voice}-${hash}.mp3`;
+      path = `${storyId}/v2-p${index}-${voice}-${hash}.mp3`;
     }
 
     const publicUrl = bucket.getPublicUrl(path).data.publicUrl;

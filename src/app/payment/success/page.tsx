@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { SiteHeader } from '@/components/SiteHeader';
 import { Icon } from '@/components/Icon';
+import { BUSINESS } from '@/data/business';
 
 function Success() {
   const q = useSearchParams();
@@ -44,7 +45,7 @@ function Success() {
             <>
               <div className="big">🌧️</div>
               <h1 className="title-2">결제를 마치지 못했어요</h1>
-              <p className="muted">{view.error} 카드에서 돈이 빠져나갔다면 {`kalliskj0730@naver.com`}으로 알려 주세요. 바로 확인해 드릴게요.</p>
+              <p className="muted">{view.error} 카드에서 돈이 빠져나갔다면 {BUSINESS.email}으로 알려 주세요. 바로 확인해 드릴게요.</p>
               <div className="stack"><Link href="/plans" className="btn btn-ink btn-block">이용권 페이지로</Link></div>
             </>
           )}

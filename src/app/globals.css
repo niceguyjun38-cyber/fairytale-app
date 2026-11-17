@@ -244,6 +244,7 @@ ul { margin: 0; padding: 0; list-style: none; }
 .section-head .lead { font-size: 1rem; }
 
 .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; counter-reset: step; }
+.steps.steps-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 900px; margin: 0 auto; }
 .step { padding: 26px 22px 24px; position: relative; }
 .step-icon {
   width: 50px; height: 50px; border-radius: 15px; display: grid; place-items: center; margin-bottom: 18px;
@@ -320,7 +321,7 @@ ul { margin: 0; padding: 0; list-style: none; }
   .hero { padding: 58px 0 72px; }
   .section { padding: 58px 0; }
   .section-head { margin-bottom: 30px; }
-  .steps { grid-template-columns: 1fr; }
+  .steps, .steps.steps-3 { grid-template-columns: 1fr; }
   .shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .sample-text { font-size: 1.08rem; }
 }
@@ -467,10 +468,19 @@ textarea.field { min-height: 130px; }
 .finish-card label { display: block; text-align: left; font-size: 0.84rem; font-weight: 700; color: var(--ink-2); margin: 22px 0 8px; }
 .finish-card input.field { font-family: var(--serif); font-size: 1.15rem; }
 @media (max-width: 900px) {
-  .studio-layout { grid-template-columns: 1fr; }
-  .studio-side { position: static; }
+  .studio-layout { grid-template-columns: 1fr; gap: 14px; }
+  .studio-side { position: static; gap: 10px; }
   .studio-seed p { display: none; }
   .composer { padding: 20px; }
+  /* 휴대폰 첫 화면에서 바로 글쓰기 칸이 보이도록 위쪽을 줄여요 */
+  .studio { padding-top: 18px; }
+  .studio-top { margin-bottom: 14px; }
+  .studio-top .title-2 { font-size: 1.2rem; }
+  .studio-seed { padding: 14px 18px; }
+  .studio-seed .seed-theme { margin-bottom: 2px; }
+  .studio-seed h2 { font-size: 1.05rem; margin-bottom: 0; }
+  .studio-progress { padding: 14px 18px; }
+  .progress-stars, .studio-tip { display: none; }
 }
 
 /* ── 그림책 읽기 ─────────────────────────────────────── */

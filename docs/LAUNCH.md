@@ -20,6 +20,8 @@ GitHub `main` 에 올라가면 Vercel이 자동 배포해요 (1~2분).
 
 ## 3. Supabase SQL 실행 (배포 직후)
 Supabase → SQL Editor → New query → `supabase/launch.sql` 전체 붙여넣기 → Run → "Success" 확인.
+이어서 새 쿼리로 `supabase/2026-11-17-payment-grant.sql` 도 똑같이 실행해요.
+(결제 확인과 별가루 지급을 한 번에 처리하는 함수예요. 실행 전에도 결제는 예전 방식으로 동작해요.)
 
 ## 4. 동작 확인 (휴대폰으로)
 1. 카카오 로그인 → 별가루가 보이는지
@@ -36,12 +38,29 @@ Supabase → SQL Editor → New query → `supabase/launch.sql` 전체 붙여넣
 - [ ] **API 키 재발급**: 개발 중 화면에 노출됐던 Anthropic / OpenAI 키를 새로 발급해 Vercel·`.env.local` 교체
 - [ ] OpenAI·Anthropic 결제 한도(Usage limit) 설정 — 예상 밖 과금 방지
 
+- [ ] **회원 탈퇴 방법 정하기**: 지금은 이메일로 요청받아 처리해요. `orders` 가 계정 삭제 시 함께 지워지게(cascade) 되어 있어서,
+      전자상거래법상 5년 보관해야 하는 결제 기록까지 사라질 수 있어요. 탈퇴 처리 전 Supabase → Table Editor → orders 를 내려받아 보관하세요.
+
+## 6. 환불 처리 방법 (운영)
+1. 토스페이먼츠 상점관리자 → 결제 내역 → 해당 주문(`dh_...`) → 결제 취소 (부분 환불은 금액 입력)
+2. Supabase → SQL Editor 에서 별가루·주문 상태 정리:
+```sql
+-- 주문 확인 (이메일로 사용자 찾기)
+select o.*, u.email from orders o join auth.users u on u.id = o.user_id where u.email = '고객이메일';
+-- 환불한 만큼 별가루 회수 + 주문 표시 (예: 별빛 전액 환불 → 18개 회수)
+update profiles set credits = greatest(credits - 18, 0), plan = 'free', plan_expires_at = null where id = '사용자ID';
+update orders set status = 'refunded' where id = 'dh_주문번호';
+```
+3. 서비스 장애로 동화를 못 만든 경우 별가루 돌려주기: `update profiles set credits = credits + 1 where id = '사용자ID';`
+
 ## 바뀐 구조 한눈에
 - `/` 서비스 소개 · `/start` 이야기 고르기 · `/create` 작업실 · `/book` 그림 그리기+읽기 · `/story/[id]` 공유용 읽기 · `/library` 서재 · `/feed` 친구들 이야기 · `/plans` 이용권
 - 동화를 시작하면 서버가 별가루 차감과 초안 생성을 한 번에 처리 (`start_story`)
 - 쓰는 중 내용·그림이 자동 저장돼서 새로고침/이탈해도 이어서 만들 수 있음
 - 그림은 서버에서 바로 저장(webp) → 저장 오류 원인이던 대용량 전송 제거
 - 낭독 음성은 문장별로 저장 → 같은 문장은 몇 번을 들어도 추가 비용 0원
+- 낭독·영어 단어는 화면이 보낸 글이 아니라 DB에 저장된 동화 문장만 사용 (아무 글이나 보내 AI 비용을 쓰는 것 차단)
+- 공개 책장에는 이 동화의 저장소에 그려진 그림만 올라감 (외부 이미지 주소 차단)
 - AI 기능은 로그인 + 동화별 사용 한도로 보호 (외부에서 API 비용 도용 불가)
 - 별가루·좋아요 수는 사용자가 직접 바꿀 수 없게 DB 권한 정리
 - 결제: 30일 이용권(자동결제 아님), 금액은 서버에서 결정, 토스 승인 후 지급

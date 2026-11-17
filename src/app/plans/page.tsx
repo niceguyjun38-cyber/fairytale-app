@@ -141,7 +141,7 @@ export default function PlansPage() {
         <div className="section-head" style={{ marginTop: 70 }}>
           <h2 className="title-2">별가루는 이렇게 써요</h2>
         </div>
-        <div className="steps" style={{ maxWidth: 900, margin: '0 auto', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+        <div className="steps steps-3">
           {[['8장 동화', '별가루 1개', '표지 · 시작 장면 포함 10장의 그림'], ['12장 동화', '별가루 1.5개', '달빛 · 별빛 이용권'], ['15장 동화', '별가루 2개', '별빛 이용권 전용']].map(([a, b, c]) => (
             <div key={a} className="step card-night" style={{ textAlign: 'center' }}>
               <h3 className="title-3">{a}</h3>
