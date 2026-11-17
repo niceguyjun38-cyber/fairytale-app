@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSupabase } from '@/lib/supabaseServer';
+import { getServerSupabase, isOwnStoryImage, isStoryId } from '@/lib/supabaseServer';
 
 // 그림까지 완성된 초안을 서재의 책으로 확정해요 (여러 번 호출해도 안전)
 export async function POST(req: NextRequest) {
   try {
     const { storyId, title, pages, isPublic } = await req.json();
-    if (typeof storyId !== 'string' || !Array.isArray(pages) || !pages.length || pages.length > 20) {
+    if (!isStoryId(storyId) || !Array.isArray(pages) || !pages.length || pages.length > 20) {
       return NextResponse.json({ error: '저장할 동화를 확인해 주세요.' }, { status: 400 });
     }
     const supabase = await getServerSupabase();
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       fairytale_id: storyId,
       page_number: i,
       ai_text: String(p.text ?? '').slice(0, 2000),
-      image_url: typeof p.imageUrl === 'string' && p.imageUrl.startsWith('https://') ? p.imageUrl : null,
+      image_url: isOwnStoryImage(p.imageUrl, storyId) ? p.imageUrl : null,
     }));
 
     await supabase.from('pages').delete().eq('fairytale_id', storyId);

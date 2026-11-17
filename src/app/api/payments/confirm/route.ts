@@ -38,6 +38,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.message || '결제를 승인하지 못했어요.' }, { status: 400 });
     }
 
+    // 결제됨 표시 + 이용권·별가루 지급을 DB에서 한 번에 처리해요 (supabase/2026-11-17-payments.sql)
+    const { data: granted, error: grantError } = await admin.rpc('grant_paid_order', { p_order: orderId, p_payment_key: paymentKey });
+    if (!grantError && granted?.[0]) {
+      const g = granted[0];
+      return NextResponse.json({ ok: true, plan: g.plan, credits: Number(g.credits), already: g.already });
+    }
+    const missingFn = grantError && (grantError.code === 'PGRST202' || /grant_paid_order/.test(grantError.message));
+    if (!missingFn) {
+      // 주문은 '대기'로 남아 있어서, 같은 화면을 새로고침하면 다시 지급을 시도해요
+      console.error('grant_paid_order', grantError?.message);
+      return NextResponse.json({ error: '결제는 됐지만 이용권 지급이 늦어지고 있어요. 이 화면을 새로고침해 주세요.' }, { status: 500 });
+    }
+
+    // ↓ 함수를 아직 만들지 않은 경우의 예전 방식
     // 주문을 먼저 '결제됨'으로 바꿔서 중복 지급을 막아요
     const { data: claimed } = await admin
       .from('orders')

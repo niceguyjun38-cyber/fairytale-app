@@ -28,6 +28,7 @@ export default function StartPage() {
 
   const plan = wallet?.plan ?? 'free';
   const option = PAGE_OPTIONS.find(o => o.count === pages)!;
+  const short = !!wallet && wallet.credits < option.cost;
 
   const start = async () => {
     if (lock.current) return;
@@ -154,7 +155,16 @@ export default function StartPage() {
                   <span>{error.text}{error.plans && <Link href="/plans">이용권 보기</Link>}</span>
                 </div>
               )}
-              {user || loading ? (
+              {short ? (
+                <>
+                  <p className="notice on-paper" style={{ marginBottom: 12 }}>
+                    <span>별가루가 {wallet!.credits}개 남았어요. 이 동화에는 {option.cost}개가 필요해요.</span>
+                  </p>
+                  <Link href="/plans" className="btn btn-gold btn-lg btn-block">
+                    <Icon name="sparkles" /> 별가루 충전하고 시작하기
+                  </Link>
+                </>
+              ) : user || loading ? (
                 <button className="btn btn-gold btn-lg btn-block" onClick={start} disabled={busy || loading}>
                   {busy ? <><span className="spin" /> 작업실을 여는 중…</> : <>이 이야기로 시작하기 <Icon name="arrow" /></>}
                 </button>
