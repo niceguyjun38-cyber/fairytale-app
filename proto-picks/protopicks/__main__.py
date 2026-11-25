@@ -108,6 +108,11 @@ def cmd_dump(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):  # Windows 한글 콘솔(cp949)에서 이모지 출력 오류 방지
+        try:
+            stream.reconfigure(errors="replace")
+        except AttributeError:
+            pass
     ap = argparse.ArgumentParser(prog="protopicks", description="베트맨 프로토 추천 분석기")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

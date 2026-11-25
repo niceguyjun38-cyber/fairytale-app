@@ -23,7 +23,14 @@
 
 폴더 수·기준은 `.env`의 `SAFE_LEGS`, `RISKY_LEGS`, `SAFE_MIN_ODDS`, `RISKY_MIN_ODDS`로 바꿀 수 있습니다.
 
-## 설치 (Windows 기준)
+## 가장 쉬운 방법 (Windows, 더블클릭)
+
+1. [Python](https://www.python.org/downloads/) 설치 — 첫 화면에서 **Add python.exe to PATH** 체크
+2. `1_설치하기.bat` 더블클릭 (처음 한 번)
+3. `2_베트맨연결확인.bat` 더블클릭 (처음 한 번, 베트맨 연결 확인)
+4. `3_지금추천받기.bat` 더블클릭 → 리포트가 브라우저로 열림
+
+## 설치 (명령어로 직접 하기)
 
 > ⚠️ **베트맨은 해외 IP 접속을 막습니다.** 반드시 **한국 인터넷에 연결된 PC**에서 실행하세요.
 > (해외 클라우드·GitHub Actions 등에서는 베트맨 수집이 실패합니다.)
