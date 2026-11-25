@@ -23,7 +23,11 @@ def _load_fixtures(csv_path: str | None):
     if csv_path:
         return load_csv(Path(csv_path))
     try:
-        return BetmanClient().fetch_fixtures()
+        client = BetmanClient()
+        fixtures = client.fetch_fixtures()
+        from .betman import format_type_stats
+        print("   게임 유형: " + format_type_stats(getattr(client, "type_stats", {})))
+        return fixtures
     except BetmanError as e:
         print(f"[베트맨] {e}")
         sys.exit(2)

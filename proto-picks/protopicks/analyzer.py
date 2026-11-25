@@ -15,6 +15,9 @@ from .fotmob import FotMob, extract_features
 from .models import OUTCOME_LABEL, Candidate, Fixture, Market
 
 
+MAX_MODEL_GAP = 0.25
+
+
 def implied_probs(market: Market) -> dict[str, float]:
     inv = {k: 1.0 / v for k, v in market.odds.items() if v > 1}
     s = sum(inv.values())
@@ -165,6 +168,10 @@ def build_candidates(fixtures: list[Fixture], store: Store, use_llm: bool = True
         for m in fx.markets:
             p_mkt = implied_probs(m)
             p_mod = (a.get("probs") or {}).get(m.match_no)
+            sanity_note = None
+            if p_mod and max(abs(p_mod.get(k, p_mkt[k]) - p_mkt[k]) for k in p_mkt) > MAX_MODEL_GAP:
+                # 모델과 배당이 25%p 넘게 차이나면 데이터 오류(유형 오인식·팀 매칭 실수) 가능성이 커서 배당 기준으로 처리
+                p_mod, sanity_note = None, "모델·배당 차이가 너무 커서 배당 기준으로 계산"
             if not p_mod:
                 w = 0.0
             elif a.get("anchored"):
@@ -186,6 +193,8 @@ def build_candidates(fixtures: list[Fixture], store: Store, use_llm: bool = True
 
             for k in m.odds:
                 reasons = list(a.get("factors", []))
+                if sanity_note:
+                    reasons.insert(0, sanity_note)
                 o = opens.get(k)
                 if o and abs(o - m.odds[k]) >= 0.01:
                     arrow = "하락" if m.odds[k] < o else "상승"
@@ -193,7 +202,7 @@ def build_candidates(fixtures: list[Fixture], store: Store, use_llm: bool = True
                 cands.append(Candidate(
                     fixture=fx, market=m, outcome=k, odds=m.odds[k],
                     p_market=p_mkt[k], p_model=p_mod.get(k) if p_mod else None, p_final=adj[k],
-                    open_odds=o, confidence=(a.get("quality") or 0.0), reasons=reasons,
+                    open_odds=o, confidence=0.0 if sanity_note else (a.get("quality") or 0.0), reasons=reasons,
                 ))
     return cands
 

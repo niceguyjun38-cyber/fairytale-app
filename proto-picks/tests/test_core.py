@@ -120,3 +120,36 @@ def test_research_flow_with_fake_client(monkeypatch):
     out = research.research_fixtures([fx])
     assert out[fx.key]["probs"]["25"]["W"] == 0.66
     assert out[fx.key]["factors"] == ["SK 5연승"]
+
+
+def test_odd_even_and_unknown_types_are_excluded():
+    keys = ["itemCode", "leagueName", "matchSeq", "homeName", "awayName", "gameDate", "mchType", "handi",
+            "winAllot", "drawAllot", "loseAllot"]
+    t = 1795628700000
+    payload = {"compSchedules": {"keys": keys, "datas": [
+        ["SC", "EPL", 1, "토트넘", "아스널", t, "일반", 0, 3.1, 3.3, 2.0],
+        ["SC", "EPL", 2, "토트넘", "아스널", t, "SUM", 0, 1.9, 0, 1.9],
+        ["SC", "EPL", 3, "토트넘", "아스널", t, "홀짝", 0, 1.9, 0, 1.9],
+        ["BK", "KBL", 4, "서울SK", "창원LG", t, "SUM", 0, 1.9, 0, 1.9],
+        ["BK", "KBL", 5, "서울SK", "창원LG", t, "승1패", 0, 2.1, 4.5, 2.5],
+        ["BK", "KBL", 6, "서울SK", "창원LG", t, "알수없는게임", 0, 1.8, 0, 1.9],
+        ["BK", "KBL", 7, "서울SK", "창원LG", t, "핸디캡", -3.5, 1.8, 0, 1.9],
+    ]}}
+    stats: dict = {}
+    fx = betman.rows_to_fixtures(betman._table_to_rows(payload), "r", stats)
+    nos = sorted(m.match_no for f in fx for m in f.markets)
+    assert nos == ["1", "7"]
+    assert stats["SUM"]["excluded"] == 2 and stats["홀짝"]["excluded"] == 1
+
+
+def test_type_field_missing_uses_row_values_and_soccer_needs_draw():
+    keys = ["itemCode", "leagueName", "matchSeq", "homeName", "awayName", "gameDate", "someLabel",
+            "winAllot", "drawAllot", "loseAllot"]
+    t = 1795628700000
+    payload = {"x": {"keys": keys, "datas": [
+        ["SC", "EPL", 1, "토트넘", "아스널", t, "", 3.1, 3.3, 2.0],          # 유형 없음 + 무 있음 → 일반
+        ["SC", "EPL", 2, "토트넘", "아스널", t, "SUM 홀/짝", 1.9, 0, 1.9],   # 값에서 SUM 감지 → 제외
+        ["SC", "EPL", 3, "토트넘", "아스널", t, "", 1.9, 0, 1.9],            # 축구인데 무 없음 → 제외
+    ]}}
+    fx = betman.rows_to_fixtures(betman._table_to_rows(payload), "r")
+    assert [m.match_no for f in fx for m in f.markets] == ["1"]

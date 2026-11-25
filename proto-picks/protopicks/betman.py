@@ -39,7 +39,8 @@ F_HOME = ("homeName", "hmTeamNm", "homeTeamName", "homeNm", "home", "홈팀")
 F_AWAY = ("awayName", "awTeamNm", "awayTeamName", "awayNm", "away", "원정팀")
 F_TIME = ("gameDate", "mchDtm", "gmDt", "matchDate", "startDate", "경기시간")
 F_NO = ("matchSeq", "gmSeq", "mchSeq", "gameSeq", "matchNo", "경기번호")
-F_TYPE = ("mchType", "gameType", "matchType", "betType", "gmTypeNm", "유형")
+F_TYPE = ("mchType", "mchTypeNm", "mchTpNm", "gameType", "gameTypeNm", "gmTypeNm", "gmTpNm", "matchType",
+          "matchTypeNm", "betType", "betTypeNm", "betTypNm", "typeNm", "유형")
 F_HANDI = ("handi", "handicap", "handiCap", "hndcp", "기준점")
 F_W = ("winAllot", "winRate", "homeAllot", "allot1", "승")
 F_D = ("drawAllot", "drawRate", "allotX", "무")
@@ -88,22 +89,47 @@ def _parse_time(v: Any) -> datetime | None:
     return None
 
 
-def _market_type(raw_type: Any, handi: float | None, has_draw: bool) -> str:
-    t = str(raw_type or "").upper()
-    if any(k in t for k in ("U/O", "UO", "언더", "오버", "UNDER")):
+# 분석하지 않는 특수 게임(운에 가까운 홀짝, 전/후반·이닝·쿼터 단위, 1점차 승부 등)
+EXCLUDED_TYPE_WORDS = ("SUM", "홀", "짝", "ODD", "EVEN", "O/E", "승1패", "1점", "5P", "전반", "후반", "하프",
+                       "HALF", "이닝", "INN", "쿼터", "1Q", "세트", "SET", "첫", "FIRST", "득점자", "스코어", "정확")
+
+
+def _market_type(raw_type: Any, handi: float | None, has_draw: bool) -> str | None:
+    """일반 → "1X2", 핸디캡 → "HANDICAP", 언더오버 → "OU", 그 외(홀짝 등)·알 수 없음 → None(제외)."""
+    t = str(raw_type or "").strip().upper()
+    if not t:
+        # 유형 표기가 없는 경우에만 추정
+        return "HANDICAP" if handi not in (None, 0.0) else "1X2"
+    if any(k in t for k in EXCLUDED_TYPE_WORDS):
+        return None
+    if any(k in t for k in ("U/O", "언더", "오버", "UNDER", "OVER")) or t in ("UO", "U", "OU"):
         return "OU"
-    if any(k in t for k in ("H", "핸디")) and "HOME" not in t:
+    if "핸디" in t or "HANDI" in t or t in ("H", "HC", "HDC"):
         return "HANDICAP"
-    if "일반" in t or t in ("N", "NORMAL", "1X2", "W"):
+    if "일반" in t or "승무패" in t or t in ("N", "NORMAL", "1X2", "WDL", "승패"):
         return "1X2"
-    if handi not in (None, 0.0):
-        return "HANDICAP"
-    return "1X2"
+    return None  # 모르는 유형은 잘못 분석하지 않도록 제외
 
 
-def rows_to_fixtures(rows: list[dict], round_id: str) -> list[Fixture]:
-    """베트맨 한 줄(dict) 목록 → Fixture 목록(같은 경기 마켓 묶음)."""
+TYPE_HINTS = ("SUM", "홀짝", "홀/짝", "핸디", "언더", "오버", "U/O", "일반", "승1패", "전반", "이닝")
+
+
+def _row_type(row: dict) -> Any:
+    """유형 필드를 못 찾으면 짧은 문자열 값들 중 유형 단어가 들어간 것을 사용."""
+    t = _first(row, F_TYPE)
+    if t not in (None, ""):
+        return t
+    for v in row.values():
+        if isinstance(v, str) and len(v) <= 12 and any(h in v.upper() for h in TYPE_HINTS):
+            return v
+    return None
+
+
+def rows_to_fixtures(rows: list[dict], round_id: str, stats: dict | None = None) -> list[Fixture]:
+    """베트맨 한 줄(dict) 목록 → Fixture 목록(같은 경기 마켓 묶음).
+    stats 를 넘기면 유형별 포함/제외 건수를 기록한다."""
     fixtures: dict[str, Fixture] = {}
+    stats = stats if stats is not None else {}
     for row in rows:
         sport_raw = str(_first(row, F_SPORT) or "")
         sport = SPORT_CODES.get(sport_raw.upper(), SPORT_CODES.get(sport_raw, "other"))
@@ -117,19 +143,40 @@ def rows_to_fixtures(rows: list[dict], round_id: str) -> list[Fixture]:
             continue
         handi = _num(_first(row, F_HANDI))
         w, d, l = (_num(_first(row, F_W)), _num(_first(row, F_D)), _num(_first(row, F_L)))
-        mtype = _market_type(_first(row, F_TYPE), handi, bool(d and d > 1))
+        row_type = _row_type(row)
+        raw_type = str(row_type or "").strip() or "(표기없음)"
+        mtype = _market_type(row_type, handi, bool(d and d > 1))
         if mtype == "OU":
             # 베트맨 화면 기준: 언더는 '승' 칸, 오버는 '패' 칸에 표시된다. (betman-dump 로 확인 권장)
             odds = {k: v for k, v in (("U", w), ("O", l)) if v and v > 1}
-        else:
+        elif mtype:
             odds = {k: v for k, v in (("W", w), ("D", d), ("L", l)) if v and v > 1}
-        if len(odds) < 2:
+        else:
+            odds = {}
+        # 축구 일반/핸디캡은 반드시 무승부 배당이 있다. 없으면 다른 게임이 섞인 것이므로 제외
+        if sport == "soccer" and mtype in ("1X2", "HANDICAP") and "D" not in odds:
+            mtype = None
+        key = f"{raw_type}"
+        bucket = stats.setdefault(key, {"included": 0, "excluded": 0, "as": mtype or "-"})
+        if not mtype or len(odds) < 2:
+            bucket["excluded"] += 1
             continue
+        bucket["included"] += 1
         mk = Market(match_no=str(match_no), market=mtype, line=handi if mtype != "1X2" else None, odds=odds)
         fx = Fixture(round_id=round_id, sport=sport, league=str(_first(row, F_LEAGUE) or ""),
                      home=str(home).strip(), away=str(away).strip(), kickoff=kickoff)
         fixtures.setdefault(fx.key, fx).markets.append(mk)
     return list(fixtures.values())
+
+
+def format_type_stats(stats: dict) -> str:
+    parts = []
+    for raw, b in sorted(stats.items(), key=lambda kv: -(kv[1]["included"] + kv[1]["excluded"])):
+        if b["included"]:
+            parts.append(f"{raw}→{b['as']} {b['included']}건")
+        if b["excluded"]:
+            parts.append(f"{raw} 제외 {b['excluded']}건")
+    return ", ".join(parts)
 
 
 def _table_to_rows(obj: Any) -> list[dict]:
@@ -209,9 +256,10 @@ class BetmanClient:
         if not rounds:
             raise BetmanError("발매중인 프로토 승부식 회차를 찾지 못했습니다. betman-dump 로 응답을 확인하세요.")
         fixtures: list[Fixture] = []
+        self.type_stats: dict = {}
         for gm_ts in rounds:
             rows = _table_to_rows(self.round_raw(gm_ts))
-            fixtures.extend(rows_to_fixtures(rows, gm_ts))
+            fixtures.extend(rows_to_fixtures(rows, gm_ts, self.type_stats))
         if not fixtures:
             raise BetmanError("경기 목록 파싱 결과가 비었습니다. betman-dump 로 응답 구조를 확인하세요.")
         return fixtures
@@ -247,8 +295,10 @@ def load_csv(path: Path) -> list[Fixture]:
     with open(path, encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
             mk = (r.get("market") or "일반").strip()
-            mtype = {"일반": "1X2", "핸디캡": "HANDICAP", "핸디": "HANDICAP", "언더오버": "OU", "U/O": "OU"}.get(
-                mk, mk.upper())
+            mtype = {"일반": "1X2", "핸디캡": "HANDICAP", "핸디": "HANDICAP", "언더오버": "OU", "U/O": "OU",
+                     "1X2": "1X2", "HANDICAP": "HANDICAP", "OU": "OU"}.get(mk)
+            if not mtype:  # 홀짝 등 분석하지 않는 유형
+                continue
             rows.append((r, mtype))
     fixtures: dict[str, Fixture] = {}
     for r, mtype in rows:
