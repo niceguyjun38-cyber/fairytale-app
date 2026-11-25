@@ -1,6 +1,6 @@
 """실행 진입점.
 
-  python -m protopicks run              # 수집 → 분석 → 7경기 + 4조합 추천 리포트
+  python -m protopicks run              # 수집 → 분석 → 7경기짜리 조합 4개(안전2·모험2) 리포트
   python -m protopicks run --csv 파일   # 베트맨 자동수집 대신 CSV 사용
   python -m protopicks snapshot         # 배당만 저장(배당 변동 추적용, 하루 여러 번 실행)
   python -m protopicks settle           # 지난 추천 결과 정산(축구 자동)
@@ -61,8 +61,8 @@ def cmd_run(args) -> None:
     cands = analyzer.build_candidates(upcoming, store, use_llm=settings.has_claude)
 
     print("3) 추천 경기·조합 구성")
-    picks = combos.select_picks(cands)
-    combo_list = combos.build_combos(picks)
+    combo_list = combos.build_combos(cands)
+    picks = combos.unique_legs(combo_list)
     store.save_picks(now.strftime("%Y-%m-%d"), combo_list)
 
     stats = {

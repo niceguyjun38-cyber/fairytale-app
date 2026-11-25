@@ -33,25 +33,29 @@ def _grade(c: Candidate) -> str:
     return "보통"
 
 
+def _membership(c: Candidate, combos: list[Combo]) -> str:
+    return "·".join(combo.name.replace(" ", "") for combo in combos if any(leg is c for leg in combo.legs))
+
+
 def text_report(run_at: datetime, picks: list[Candidate], combos: list[Combo], record: dict | None) -> str:
     lines = [f"⚽ 프로토 추천 {run_at:%Y-%m-%d}({WEEKDAY[run_at.weekday()]}) {run_at:%H:%M} 기준", ""]
-    lines.append(f"■ 오늘의 {len(picks)}경기")
-    for i, c in enumerate(picks, 1):
+    for combo in combos:
+        icon = "🛡" if combo.kind == "safe" else "🎯"
+        lines.append(f"{icon} {combo.name} ({len(combo.legs)}폴더) 총배당 {combo.total_odds:.2f} | "
+                     f"적중확률 {_pct(combo.hit_prob)}")
+        for c in combo.legs:
+            lines.append(f"   {c.market.match_no:>4}번 {c.fixture.title} → {c.pick_label} @{c.odds:.2f}")
+        lines.append("")
+    lines.append(f"■ 경기별 근거 ({len(picks)}경기)")
+    for c in picks:
         fx = c.fixture
         lines.append(
-            f"{i}. [{c.market.match_no}번] {SPORT_LABEL.get(fx.sport, fx.sport)} {fx.league} {_kick(c)}\n"
+            f"[{c.market.match_no}번] {SPORT_LABEL.get(fx.sport, fx.sport)} {fx.league} {_kick(c)} · {_membership(c, combos)}\n"
             f"   {fx.title} → {c.pick_label} @{c.odds:.2f} | 예상 {_pct(c.p_final)} (배당 {_pct(c.p_market)})"
             f" | EV {c.edge * 100:+.0f}% | {_grade(c)}"
         )
         if c.reasons:
             lines.append("   · " + " / ".join(c.reasons[:3]))
-    lines.append("")
-    for combo in combos:
-        icon = "🛡" if combo.kind == "safe" else "🎯"
-        legs = ", ".join(f"{c.market.match_no}번 {c.pick_label}" for c in combo.legs)
-        lines.append(f"{icon} {combo.name} ({len(combo.legs)}폴더) 총배당 {combo.total_odds:.2f} | "
-                     f"적중확률 {_pct(combo.hit_prob)} | EV {combo.ev * 100:+.0f}%")
-        lines.append(f"   {legs}")
     if record:
         lines.append("")
         lines.append(_record_line(record))
@@ -81,7 +85,8 @@ ul.r{margin:6px 0 0 0;padding-left:18px;color:var(--sub);font-size:13px}.combos{
 .combo h3{margin:0 0 6px;font-size:16px}.combo.safe h3{color:var(--safe)}.combo.risky h3{color:var(--risky)}
 .combo table{width:100%;border-collapse:collapse;font-size:13px}.combo td{padding:3px 0;border-bottom:1px solid var(--line)}
 .combo td:last-child{text-align:right;font-variant-numeric:tabular-nums}.kpi{display:flex;gap:14px;margin-top:8px;font-size:13px}
-.kpi b{font-size:16px;display:block}footer{margin-top:28px;color:var(--sub);font-size:12px}
+.kpi b{font-size:16px;display:block}
+@media (max-width:560px){.pick{grid-template-columns:32px 1fr}.pick .nums{grid-column:2;text-align:left;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}}footer{margin-top:28px;color:var(--sub);font-size:12px}
 """
 
 
@@ -97,20 +102,6 @@ def html_report(run_at: datetime, picks: list[Candidate], combos: list[Combo], r
         sub += f" · 대상 {stats.get('fixtures', 0)}경기 · FotMob 분석 {stats.get('fotmob', 0)} · 웹리서치 {stats.get('research', 0)}"
     out.append(f"<div class='sub'>{e(sub)}</div>")
 
-    out.append(f"<h2>오늘의 {len(picks)}경기</h2>")
-    for c in picks:
-        fx = c.fixture
-        reasons = "".join(f"<li>{e(r)}</li>" for r in c.reasons[:5])
-        out.append(
-            f"<div class='card pick'><div class='no'>{e(c.market.match_no)}</div><div>"
-            f"<div class='meta'>{e(SPORT_LABEL.get(fx.sport, fx.sport))} · {e(fx.league)} · {_kick(c)}</div>"
-            f"<div>{e(fx.title)}</div><div class='sel'>{e(c.pick_label)}<span class='tag'>{_grade(c)}</span></div>"
-            f"<ul class='r'>{reasons}</ul></div>"
-            f"<div class='nums'><div class='odds'>{c.odds:.2f}</div>"
-            f"<div class='meta'>예상 {_pct(c.p_final)} / 배당 {_pct(c.p_market)}</div>"
-            f"<div class='meta'>EV {c.edge * 100:+.0f}% · 변동 {e(_move(c))}</div></div></div>"
-        )
-
     out.append("<h2>추천 조합</h2><div class='combos'>")
     for combo in combos:
         rows = "".join(f"<tr><td>{e(c.market.match_no)}번 {e(c.fixture.title)}<br><b>{e(c.pick_label)}</b></td>"
@@ -122,6 +113,20 @@ def html_report(run_at: datetime, picks: list[Candidate], combos: list[Combo], r
             f"<div>적중확률<b>{_pct(combo.hit_prob)}</b></div><div>기대값<b>{combo.ev * 100:+.0f}%</b></div></div></div>"
         )
     out.append("</div>")
+    out.append(f"<h2>경기별 근거 ({len(picks)}경기)</h2>")
+    for c in picks:
+        fx = c.fixture
+        reasons = "".join(f"<li>{e(r)}</li>" for r in c.reasons[:4])
+        out.append(
+            f"<div class='card pick'><div class='no'>{e(c.market.match_no)}</div><div>"
+            f"<div class='meta'>{e(SPORT_LABEL.get(fx.sport, fx.sport))} · {e(fx.league)} · {_kick(c)}</div>"
+            f"<div>{e(fx.title)}</div><div class='sel'>{e(c.pick_label)}<span class='tag'>{_grade(c)}</span><span class='tag'>{e(_membership(c, combos))}</span></div>"
+            f"<ul class='r'>{reasons}</ul></div>"
+            f"<div class='nums'><div class='odds'>{c.odds:.2f}</div>"
+            f"<div class='meta'>예상 {_pct(c.p_final)} / 배당 {_pct(c.p_market)}</div>"
+            f"<div class='meta'>EV {c.edge * 100:+.0f}% · 변동 {e(_move(c))}</div></div></div>"
+        )
+
     if record:
         out.append(f"<h2>누적 성적</h2><div class='card'>{e(_record_line(record))}</div>")
     out.append(

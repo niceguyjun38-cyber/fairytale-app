@@ -74,19 +74,32 @@ def _cand(i: int, p: float, odds: float) -> Candidate:
     return Candidate(fx, m, "W", odds, p, p, p)
 
 
-def test_picks_and_combos():
-    cands = [_cand(i, p, o) for i, (p, o) in enumerate(
-        [(0.80, 1.20), (0.75, 1.30), (0.70, 1.40), (0.66, 1.50), (0.45, 2.60), (0.40, 2.90), (0.35, 3.40),
-         (0.50, 1.80), (0.30, 3.00)])]
-    picks = combos.select_picks(cands, 7)
-    assert len(picks) == 7 and len({c.fixture.key for c in picks}) == 7
-    cs = combos.build_combos(picks)
-    kinds = [c.kind for c in cs]
-    assert kinds.count("safe") == 2 and kinds.count("risky") == 2
-    safe = [c for c in cs if c.kind == "safe"]
-    risky = [c for c in cs if c.kind == "risky"]
-    assert min(c.hit_prob for c in safe) > max(c.hit_prob for c in risky)
-    assert set(map(id, safe[0].legs)) != set(map(id, safe[1].legs))
+def test_seven_leg_combos():
+    probs = [(0.85, 1.15), (0.82, 1.18), (0.80, 1.20), (0.78, 1.25), (0.75, 1.30), (0.72, 1.35), (0.70, 1.40),
+             (0.68, 1.45), (0.66, 1.50), (0.64, 1.55), (0.62, 1.60), (0.60, 1.65),
+             (0.45, 2.60), (0.40, 2.90), (0.35, 3.40), (0.38, 3.00), (0.33, 3.50)]
+    cands = [_cand(i, p, o) for i, (p, o) in enumerate(probs)]
+    # 리그 편중 제한에 걸리지 않도록 리그를 다양화
+    for i, c in enumerate(cands):
+        c.fixture.league = f"L{i}"
+    cs = combos.build_combos(cands)
+    assert [c.name for c in cs] == ["안전 A", "안전 B", "모험 A", "모험 B"]
+    assert all(len(c.legs) == 7 for c in cs)
+    for c in cs:  # 한 조합 안에 같은 경기 중복 없음
+        assert len({leg.fixture.key for leg in c.legs}) == 7
+    safe_a, safe_b, risky_a, risky_b = cs
+    assert safe_a.hit_prob > safe_b.hit_prob > risky_a.hit_prob > risky_b.hit_prob
+    assert len(set(map(id, safe_a.legs)) & set(map(id, safe_b.legs))) == 4
+    assert risky_b.total_odds > risky_a.total_odds > safe_a.total_odds
+    assert len(combos.unique_legs(cs)) >= 7
+
+
+def test_few_fixtures_still_builds():
+    cands = [_cand(i, 0.7, 1.4) for i in range(3)]
+    for i, c in enumerate(cands):
+        c.fixture.league = f"L{i}"
+    cs = combos.build_combos(cands)
+    assert cs and all(len(c.legs) == 3 for c in cs)
 
 
 def test_research_flow_with_fake_client(monkeypatch):

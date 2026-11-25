@@ -106,11 +106,21 @@ def soccer_analysis(fx: Fixture, fm: FotMob) -> dict | None:
         return {"probs": {}, "quality": 0.0, "factors": factors, "lambdas": None}
     lam_h, lam_a, quality = xg
     lam_h, lam_a, notes = soccer_model.adjust_lambdas(lam_h, lam_a, feats)
-    mat = soccer_model.score_matrix(lam_h, lam_a)
+    w = settings.model_weight_soccer * quality
+    mkt = soccer_model.fit_market_lambdas(fx.markets, total_hint=lam_h + lam_a)
+    if mkt:
+        fin_h, fin_a = soccer_model.blend_lambdas(mkt, (lam_h, lam_a), w)
+        factors.insert(0, f"예상득점 {hn} {fin_h:.2f} : {fin_a:.2f} {an} "
+                          f"(배당기준 {mkt[0]:.2f}:{mkt[1]:.2f}, 통계 {lam_h:.2f}:{lam_a:.2f})")
+    else:
+        fin_h, fin_a = lam_h, lam_a
+        factors.insert(0, f"예상득점 {hn} {fin_h:.2f} : {fin_a:.2f} {an}")
+    mat = soccer_model.score_matrix(fin_h, fin_a)
     probs = {m.match_no: soccer_model.market_probs(mat, m) for m in fx.markets}
-    factors.insert(0, f"예상득점 {hn} {lam_h:.2f} : {lam_a:.2f} {an}")
     factors.extend(notes)
-    return {"probs": probs, "quality": quality, "factors": factors, "lambdas": (lam_h, lam_a)}
+    # anchored=True: 이미 시장 기준점과 혼합된 확률이므로 뒤 단계에서 다시 섞지 않는다
+    return {"probs": probs, "quality": quality, "factors": factors, "lambdas": (fin_h, fin_a),
+            "anchored": bool(mkt), "weight": w}
 
 
 # ------------------------------------------------------------------ 공통
@@ -155,7 +165,12 @@ def build_candidates(fixtures: list[Fixture], store: Store, use_llm: bool = True
         for m in fx.markets:
             p_mkt = implied_probs(m)
             p_mod = (a.get("probs") or {}).get(m.match_no)
-            w = base_w * (a.get("quality") or 0.0) if p_mod else 0.0
+            if not p_mod:
+                w = 0.0
+            elif a.get("anchored"):
+                w = 1.0  # 축구: 기대득점 단계에서 이미 배당 기준점과 혼합됨
+            else:
+                w = base_w * (a.get("quality") or 0.0)
             blended = {k: w * (p_mod.get(k, p_mkt[k]) if p_mod else 0) + (1 - w) * p_mkt[k] for k in p_mkt}
 
             # 배당 변동 보정
